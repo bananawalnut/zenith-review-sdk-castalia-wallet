@@ -19,6 +19,9 @@ export type ReviewCaptureEventType =
   | 'audio-error'
   | 'screenshot-captured'
   | 'time-limit-reached'
+  | 'session-start'
+  | 'navigation'
+  | 'visibility-change'
 
 export interface ReviewCaptureEventBase {
   id: number
@@ -154,6 +157,48 @@ export interface ReviewTimeLimitReachedEvent extends ReviewCaptureEventBase {
   timeLimitMs: number
 }
 
+export interface ReviewSessionContext {
+  url: string
+  title: string
+  scrollX: number
+  scrollY: number
+  viewportWidth: number
+  viewportHeight: number
+}
+
+export interface ReviewSessionStartEvent extends ReviewCaptureEventBase {
+  type: 'session-start'
+  url: string
+  title: string
+  scrollX: number
+  scrollY: number
+  viewportWidth: number
+  viewportHeight: number
+}
+
+export type ReviewNavigationTrigger =
+  | 'pushstate'
+  | 'replacestate'
+  | 'popstate'
+  | 'hashchange'
+  | 'title-change'
+
+export interface ReviewNavigationCaptureEvent extends ReviewCaptureEventBase {
+  type: 'navigation'
+  trigger: ReviewNavigationTrigger
+  fromUrl: string
+  fromTitle: string
+  toUrl: string
+  toTitle: string
+  scrollX: number
+  scrollY: number
+}
+
+export interface ReviewVisibilityChangeEvent extends ReviewCaptureEventBase {
+  type: 'visibility-change'
+  state: 'visible' | 'hidden'
+}
+
 export type ReviewCaptureEvent =
   | ReviewRecordingStateEvent
   | ReviewCaptureModeEvent
@@ -167,6 +212,9 @@ export type ReviewCaptureEvent =
   | ReviewAudioErrorEvent
   | ReviewScreenshotCapturedEvent
   | ReviewTimeLimitReachedEvent
+  | ReviewSessionStartEvent
+  | ReviewNavigationCaptureEvent
+  | ReviewVisibilityChangeEvent
 
 export interface ReviewCaptureSnapshot {
   recording: boolean
@@ -196,6 +244,7 @@ export interface ReviewRecordingResult {
   stoppedAt: string
   durationMs: number
   captureMode: ReviewCaptureMode
+  sessionContext: ReviewSessionContext
   cursor?: ReviewCursorSnapshot
   selection?: ReviewSelectionSnapshot
   lastSelection?: ReviewSelectionSnapshot
@@ -452,6 +501,12 @@ class BrowserReviewRecorder implements ReviewRecorder {
   private screenshotId = 0
   private timeLimitReached = false
   private timeLimitTimer?: number
+  private sessionContext?: ReviewSessionContext
+  private lastKnownUrl = ''
+  private lastKnownTitle = ''
+  private originalPushState?: typeof history.pushState
+  private originalReplaceState?: typeof history.replaceState
+  private titleObserver?: MutationObserver
   private pendingPointerEvent?: ReviewCaptureEvent
   private pendingPointerNotification?: number
   private readonly stateContext: ReviewCaptureStateContext = {
@@ -508,7 +563,18 @@ class BrowserReviewRecorder implements ReviewRecorder {
     this.screenshots = []
     this.screenshotId = 0
     this.timeLimitReached = false
+    this.lastKnownUrl = this.targetWindow.location.href
+    this.lastKnownTitle = this.document.title
+    this.sessionContext = {
+      url: this.lastKnownUrl,
+      title: this.lastKnownTitle,
+      scrollX: Math.round(this.targetWindow.scrollX),
+      scrollY: Math.round(this.targetWindow.scrollY),
+      viewportWidth: this.targetWindow.innerWidth,
+      viewportHeight: this.targetWindow.innerHeight,
+    }
     this.bindPassiveRecordingEvents()
+    this.bindNavigationCapture()
 
     if (this.options.timeLimitMs > 0) {
       this.timeLimitTimer = this.targetWindow.setTimeout(() => {
@@ -526,6 +592,15 @@ class BrowserReviewRecorder implements ReviewRecorder {
 
     this.captureState.enter()
     this.log({ type: 'recording-started' })
+    this.log({
+      type: 'session-start',
+      url: this.sessionContext!.url,
+      title: this.sessionContext!.title,
+      scrollX: this.sessionContext!.scrollX,
+      scrollY: this.sessionContext!.scrollY,
+      viewportWidth: this.sessionContext!.viewportWidth,
+      viewportHeight: this.sessionContext!.viewportHeight,
+    })
 
     await this.startMediaCapture()
   }
@@ -545,6 +620,16 @@ class BrowserReviewRecorder implements ReviewRecorder {
     this.disposers.forEach(dispose => dispose())
     this.disposers = []
     this.imageCapture = undefined
+    this.titleObserver?.disconnect()
+    this.titleObserver = undefined
+    if (this.originalPushState) {
+      this.targetWindow.history.pushState = this.originalPushState
+      this.originalPushState = undefined
+    }
+    if (this.originalReplaceState) {
+      this.targetWindow.history.replaceState = this.originalReplaceState
+      this.originalReplaceState = undefined
+    }
     await this.stopMediaCapture()
 
     return this.buildResult()
@@ -676,6 +761,100 @@ class BrowserReviewRecorder implements ReviewRecorder {
       || event.type === 'pointer-up'
       || event.type === 'click'
     )
+  }
+
+  private logNavigation(
+    trigger: ReviewNavigationTrigger,
+    fromUrl: string,
+    fromTitle: string,
+  ) {
+    const toUrl = this.targetWindow.location.href
+    const toTitle = this.document.title
+    this.lastKnownUrl = toUrl
+    this.lastKnownTitle = toTitle
+    this.log({
+      type: 'navigation',
+      trigger,
+      fromUrl,
+      fromTitle,
+      toUrl,
+      toTitle,
+      scrollX: Math.round(this.targetWindow.scrollX),
+      scrollY: Math.round(this.targetWindow.scrollY),
+    })
+  }
+
+  private bindNavigationCapture() {
+    const target = this.targetWindow
+    const doc = this.document
+
+    // Patch pushState / replaceState to intercept SPA navigation
+    this.originalPushState = target.history.pushState.bind(target.history)
+    this.originalReplaceState = target.history.replaceState.bind(target.history)
+
+    target.history.pushState = (state: unknown, unused: string, url?: string | URL | null) => {
+      const fromUrl = this.lastKnownUrl
+      const fromTitle = this.lastKnownTitle
+      this.originalPushState!(state, unused, url)
+      this.logNavigation('pushstate', fromUrl, fromTitle)
+    }
+
+    target.history.replaceState = (state: unknown, unused: string, url?: string | URL | null) => {
+      const fromUrl = this.lastKnownUrl
+      const fromTitle = this.lastKnownTitle
+      this.originalReplaceState!(state, unused, url)
+      this.logNavigation('replacestate', fromUrl, fromTitle)
+    }
+
+    // popstate — browser back / forward
+    const onPopState = () => {
+      this.logNavigation('popstate', this.lastKnownUrl, this.lastKnownTitle)
+    }
+    target.addEventListener('popstate', onPopState)
+    this.disposers.push(() => target.removeEventListener('popstate', onPopState))
+
+    // hashchange — hash-based routing
+    const onHashChange = () => {
+      this.logNavigation('hashchange', this.lastKnownUrl, this.lastKnownTitle)
+    }
+    target.addEventListener('hashchange', onHashChange)
+    this.disposers.push(() => target.removeEventListener('hashchange', onHashChange))
+
+    // visibilitychange — tab hidden / shown
+    const onVisibility = () => {
+      if (!this.recording) return
+      this.log({
+        type: 'visibility-change',
+        state: doc.visibilityState === 'hidden' ? 'hidden' : 'visible',
+      })
+    }
+    doc.addEventListener('visibilitychange', onVisibility)
+    this.disposers.push(() => doc.removeEventListener('visibilitychange', onVisibility))
+
+    // MutationObserver on <title> — catches SPA title updates without URL changes
+    const titleEl = doc.querySelector('title')
+    if (titleEl) {
+      this.titleObserver = new MutationObserver(() => {
+        if (!this.recording) return
+        const newTitle = doc.title
+        if (newTitle !== this.lastKnownTitle) {
+          const fromUrl = this.lastKnownUrl
+          const fromTitle = this.lastKnownTitle
+          this.lastKnownTitle = newTitle
+          this.log({
+            type: 'navigation',
+            trigger: 'title-change',
+            fromUrl,
+            fromTitle,
+            toUrl: this.lastKnownUrl,
+            toTitle: newTitle,
+            scrollX: Math.round(target.scrollX),
+            scrollY: Math.round(target.scrollY),
+          })
+        }
+      })
+      this.titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true })
+    }
   }
 
   private bindPassiveRecordingEvents() {
@@ -1263,6 +1442,14 @@ class BrowserReviewRecorder implements ReviewRecorder {
       stoppedAt,
       durationMs: this.startTime ? this.getElapsedMs() : 0,
       captureMode: this.captureMode,
+      sessionContext: this.sessionContext ?? {
+        url: this.targetWindow.location.href,
+        title: this.document.title,
+        scrollX: 0,
+        scrollY: 0,
+        viewportWidth: this.targetWindow.innerWidth,
+        viewportHeight: this.targetWindow.innerHeight,
+      },
       cursor: this.cursor,
       selection: this.selection,
       lastSelection: this.lastSelection,

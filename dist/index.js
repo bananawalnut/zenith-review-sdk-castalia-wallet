@@ -152,6 +152,12 @@ class BrowserReviewRecorder {
     screenshotId = 0;
     timeLimitReached = false;
     timeLimitTimer;
+    sessionContext;
+    lastKnownUrl = '';
+    lastKnownTitle = '';
+    originalPushState;
+    originalReplaceState;
+    titleObserver;
     pendingPointerEvent;
     pendingPointerNotification;
     stateContext = {
@@ -206,7 +212,18 @@ class BrowserReviewRecorder {
         this.screenshots = [];
         this.screenshotId = 0;
         this.timeLimitReached = false;
+        this.lastKnownUrl = this.targetWindow.location.href;
+        this.lastKnownTitle = this.document.title;
+        this.sessionContext = {
+            url: this.lastKnownUrl,
+            title: this.lastKnownTitle,
+            scrollX: Math.round(this.targetWindow.scrollX),
+            scrollY: Math.round(this.targetWindow.scrollY),
+            viewportWidth: this.targetWindow.innerWidth,
+            viewportHeight: this.targetWindow.innerHeight,
+        };
         this.bindPassiveRecordingEvents();
+        this.bindNavigationCapture();
         if (this.options.timeLimitMs > 0) {
             this.timeLimitTimer = this.targetWindow.setTimeout(() => {
                 this.timeLimitReached = true;
@@ -222,6 +239,15 @@ class BrowserReviewRecorder {
         }
         this.captureState.enter();
         this.log({ type: 'recording-started' });
+        this.log({
+            type: 'session-start',
+            url: this.sessionContext.url,
+            title: this.sessionContext.title,
+            scrollX: this.sessionContext.scrollX,
+            scrollY: this.sessionContext.scrollY,
+            viewportWidth: this.sessionContext.viewportWidth,
+            viewportHeight: this.sessionContext.viewportHeight,
+        });
         await this.startMediaCapture();
     }
     async stop() {
@@ -238,6 +264,16 @@ class BrowserReviewRecorder {
         this.disposers.forEach(dispose => dispose());
         this.disposers = [];
         this.imageCapture = undefined;
+        this.titleObserver?.disconnect();
+        this.titleObserver = undefined;
+        if (this.originalPushState) {
+            this.targetWindow.history.pushState = this.originalPushState;
+            this.originalPushState = undefined;
+        }
+        if (this.originalReplaceState) {
+            this.targetWindow.history.replaceState = this.originalReplaceState;
+            this.originalReplaceState = undefined;
+        }
         await this.stopMediaCapture();
         return this.buildResult();
     }
@@ -346,6 +382,89 @@ class BrowserReviewRecorder {
             || event.type === 'pointer-down'
             || event.type === 'pointer-up'
             || event.type === 'click');
+    }
+    logNavigation(trigger, fromUrl, fromTitle) {
+        const toUrl = this.targetWindow.location.href;
+        const toTitle = this.document.title;
+        this.lastKnownUrl = toUrl;
+        this.lastKnownTitle = toTitle;
+        this.log({
+            type: 'navigation',
+            trigger,
+            fromUrl,
+            fromTitle,
+            toUrl,
+            toTitle,
+            scrollX: Math.round(this.targetWindow.scrollX),
+            scrollY: Math.round(this.targetWindow.scrollY),
+        });
+    }
+    bindNavigationCapture() {
+        const target = this.targetWindow;
+        const doc = this.document;
+        // Patch pushState / replaceState to intercept SPA navigation
+        this.originalPushState = target.history.pushState.bind(target.history);
+        this.originalReplaceState = target.history.replaceState.bind(target.history);
+        target.history.pushState = (state, unused, url) => {
+            const fromUrl = this.lastKnownUrl;
+            const fromTitle = this.lastKnownTitle;
+            this.originalPushState(state, unused, url);
+            this.logNavigation('pushstate', fromUrl, fromTitle);
+        };
+        target.history.replaceState = (state, unused, url) => {
+            const fromUrl = this.lastKnownUrl;
+            const fromTitle = this.lastKnownTitle;
+            this.originalReplaceState(state, unused, url);
+            this.logNavigation('replacestate', fromUrl, fromTitle);
+        };
+        // popstate — browser back / forward
+        const onPopState = () => {
+            this.logNavigation('popstate', this.lastKnownUrl, this.lastKnownTitle);
+        };
+        target.addEventListener('popstate', onPopState);
+        this.disposers.push(() => target.removeEventListener('popstate', onPopState));
+        // hashchange — hash-based routing
+        const onHashChange = () => {
+            this.logNavigation('hashchange', this.lastKnownUrl, this.lastKnownTitle);
+        };
+        target.addEventListener('hashchange', onHashChange);
+        this.disposers.push(() => target.removeEventListener('hashchange', onHashChange));
+        // visibilitychange — tab hidden / shown
+        const onVisibility = () => {
+            if (!this.recording)
+                return;
+            this.log({
+                type: 'visibility-change',
+                state: doc.visibilityState === 'hidden' ? 'hidden' : 'visible',
+            });
+        };
+        doc.addEventListener('visibilitychange', onVisibility);
+        this.disposers.push(() => doc.removeEventListener('visibilitychange', onVisibility));
+        // MutationObserver on <title> — catches SPA title updates without URL changes
+        const titleEl = doc.querySelector('title');
+        if (titleEl) {
+            this.titleObserver = new MutationObserver(() => {
+                if (!this.recording)
+                    return;
+                const newTitle = doc.title;
+                if (newTitle !== this.lastKnownTitle) {
+                    const fromUrl = this.lastKnownUrl;
+                    const fromTitle = this.lastKnownTitle;
+                    this.lastKnownTitle = newTitle;
+                    this.log({
+                        type: 'navigation',
+                        trigger: 'title-change',
+                        fromUrl,
+                        fromTitle,
+                        toUrl: this.lastKnownUrl,
+                        toTitle: newTitle,
+                        scrollX: Math.round(target.scrollX),
+                        scrollY: Math.round(target.scrollY),
+                    });
+                }
+            });
+            this.titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+        }
     }
     bindPassiveRecordingEvents() {
         const target = this.targetWindow;
@@ -882,6 +1001,14 @@ class BrowserReviewRecorder {
             stoppedAt,
             durationMs: this.startTime ? this.getElapsedMs() : 0,
             captureMode: this.captureMode,
+            sessionContext: this.sessionContext ?? {
+                url: this.targetWindow.location.href,
+                title: this.document.title,
+                scrollX: 0,
+                scrollY: 0,
+                viewportWidth: this.targetWindow.innerWidth,
+                viewportHeight: this.targetWindow.innerHeight,
+            },
             cursor: this.cursor,
             selection: this.selection,
             lastSelection: this.lastSelection,

@@ -1,4 +1,4 @@
-export type ReviewCaptureEventType = 'recording-started' | 'recording-stopped' | 'capture-mode-changed' | 'pointer-move' | 'pointer-down' | 'pointer-up' | 'click' | 'key-down' | 'selection-change' | 'drawing-enabled' | 'drawing-disabled' | 'drawing-input-enabled' | 'drawing-input-disabled' | 'stroke-started' | 'stroke-point' | 'stroke-ended' | 'audio-chunk' | 'audio-error' | 'screenshot-captured' | 'time-limit-reached';
+export type ReviewCaptureEventType = 'recording-started' | 'recording-stopped' | 'capture-mode-changed' | 'pointer-move' | 'pointer-down' | 'pointer-up' | 'click' | 'key-down' | 'selection-change' | 'drawing-enabled' | 'drawing-disabled' | 'drawing-input-enabled' | 'drawing-input-disabled' | 'stroke-started' | 'stroke-point' | 'stroke-ended' | 'audio-chunk' | 'audio-error' | 'screenshot-captured' | 'time-limit-reached' | 'session-start' | 'navigation' | 'visibility-change';
 export interface ReviewCaptureEventBase {
     id: number;
     type: ReviewCaptureEventType;
@@ -113,7 +113,39 @@ export interface ReviewTimeLimitReachedEvent extends ReviewCaptureEventBase {
     type: 'time-limit-reached';
     timeLimitMs: number;
 }
-export type ReviewCaptureEvent = ReviewRecordingStateEvent | ReviewCaptureModeEvent | ReviewDrawingStateEvent | ReviewDrawingInputStateEvent | ReviewPointerCaptureEvent | ReviewKeyCaptureEvent | ReviewSelectionCaptureEvent | ReviewStrokeCaptureEvent | ReviewAudioCaptureEvent | ReviewAudioErrorEvent | ReviewScreenshotCapturedEvent | ReviewTimeLimitReachedEvent;
+export interface ReviewSessionContext {
+    url: string;
+    title: string;
+    scrollX: number;
+    scrollY: number;
+    viewportWidth: number;
+    viewportHeight: number;
+}
+export interface ReviewSessionStartEvent extends ReviewCaptureEventBase {
+    type: 'session-start';
+    url: string;
+    title: string;
+    scrollX: number;
+    scrollY: number;
+    viewportWidth: number;
+    viewportHeight: number;
+}
+export type ReviewNavigationTrigger = 'pushstate' | 'replacestate' | 'popstate' | 'hashchange' | 'title-change';
+export interface ReviewNavigationCaptureEvent extends ReviewCaptureEventBase {
+    type: 'navigation';
+    trigger: ReviewNavigationTrigger;
+    fromUrl: string;
+    fromTitle: string;
+    toUrl: string;
+    toTitle: string;
+    scrollX: number;
+    scrollY: number;
+}
+export interface ReviewVisibilityChangeEvent extends ReviewCaptureEventBase {
+    type: 'visibility-change';
+    state: 'visible' | 'hidden';
+}
+export type ReviewCaptureEvent = ReviewRecordingStateEvent | ReviewCaptureModeEvent | ReviewDrawingStateEvent | ReviewDrawingInputStateEvent | ReviewPointerCaptureEvent | ReviewKeyCaptureEvent | ReviewSelectionCaptureEvent | ReviewStrokeCaptureEvent | ReviewAudioCaptureEvent | ReviewAudioErrorEvent | ReviewScreenshotCapturedEvent | ReviewTimeLimitReachedEvent | ReviewSessionStartEvent | ReviewNavigationCaptureEvent | ReviewVisibilityChangeEvent;
 export interface ReviewCaptureSnapshot {
     recording: boolean;
     captureMode: ReviewCaptureMode;
@@ -140,6 +172,7 @@ export interface ReviewRecordingResult {
     stoppedAt: string;
     durationMs: number;
     captureMode: ReviewCaptureMode;
+    sessionContext: ReviewSessionContext;
     cursor?: ReviewCursorSnapshot;
     selection?: ReviewSelectionSnapshot;
     lastSelection?: ReviewSelectionSnapshot;

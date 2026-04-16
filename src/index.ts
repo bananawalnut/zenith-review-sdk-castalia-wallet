@@ -1475,3 +1475,71 @@ class BrowserReviewRecorder implements ReviewRecorder {
 export function createReviewRecorder(options?: ReviewRecorderOptions): ReviewRecorder {
   return new BrowserReviewRecorder(options)
 }
+
+export interface ReviewSubmitOptions {
+  hubUrl: string
+  subjectId: string
+  submittedBy: string
+  reviewId?: string
+}
+
+export interface ReviewSubmitResult {
+  reviewId: string
+  assetIds: string[]
+  status: string
+}
+
+async function uploadAsset(
+  hubUrl: string,
+  blob: Blob,
+  assetType: string,
+  mimeType?: string,
+): Promise<string> {
+  const form = new FormData()
+  form.append('file', new Blob([blob], { type: mimeType ?? blob.type }), 'asset')
+  form.append('asset_type', assetType)
+  const res = await fetch(`${hubUrl}/v1/reviews/assets`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`Asset upload failed: ${res.status}`)
+  const data = await res.json() as { asset_id: string }
+  return data.asset_id
+}
+
+export async function submitReview(
+  result: ReviewRecordingResult,
+  options: ReviewSubmitOptions,
+): Promise<ReviewSubmitResult> {
+  const { hubUrl, subjectId, submittedBy } = options
+  const reviewId = options.reviewId ?? crypto.randomUUID()
+  const assetIds: string[] = []
+
+  const eventsBlob = new Blob([JSON.stringify(result.events)], { type: 'application/json' })
+  assetIds.push(await uploadAsset(hubUrl, eventsBlob, 'events', 'application/json'))
+
+  if (result.audio) {
+    assetIds.push(await uploadAsset(hubUrl, result.audio.blob, 'audio', result.audio.mimeType))
+  }
+
+  const body = {
+    review_id: reviewId,
+    subject_id: subjectId,
+    submitted_by: submittedBy,
+    started_at: result.startedAt,
+    stopped_at: result.stoppedAt,
+    duration_ms: result.durationMs,
+    asset_ids: assetIds,
+    metadata: {
+      stroke_count: result.strokes.length,
+      event_count: result.events.length,
+      capture_mode: result.captureMode,
+    },
+  }
+  const res = await fetch(`${hubUrl}/v1/reviews`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`Review submit failed: ${res.status}`)
+  const data = await res.json() as { review_id: string; status: string }
+
+  return { reviewId: data.review_id, assetIds, status: data.status }
+}

@@ -12,3 +12,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `ReviewScreenshot` type and `screenshots` field on `ReviewRecordingResult` and `ReviewCaptureSnapshot`.
 - `timeLimitReached` boolean field on `ReviewRecordingResult`.
 - New event types: `screenshot-captured`, `time-limit-reached`.
+- `sessionContext` field on `ReviewRecordingResult` — captures URL, title, scroll position, and viewport size at record start.
+- Navigation capture via patched `history.pushState`/`replaceState`, `popstate`, `hashchange`, and `MutationObserver` on `document.title` — each change logs a `navigation` event with the new URL and title. Enables SPA session replay reproducibility (e.g. swirl-ui tab switches).
+- New event types: `session-start`, `navigation`.

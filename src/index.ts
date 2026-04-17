@@ -1519,6 +1519,10 @@ export async function submitReview(
     assetIds.push(await uploadAsset(hubUrl, result.audio.blob, 'audio', result.audio.mimeType))
   }
 
+  for (const screenshot of result.screenshots) {
+    assetIds.push(await uploadAsset(hubUrl, screenshot.blob, 'screenshot', 'image/webp'))
+  }
+
   const body = {
     review_id: reviewId,
     subject_id: subjectId,

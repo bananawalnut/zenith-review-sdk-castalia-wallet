@@ -1,4 +1,4 @@
-export type ReviewCaptureEventType = 'recording-started' | 'recording-stopped' | 'capture-mode-changed' | 'pointer-move' | 'pointer-down' | 'pointer-up' | 'click' | 'key-down' | 'selection-change' | 'drawing-enabled' | 'drawing-disabled' | 'drawing-input-enabled' | 'drawing-input-disabled' | 'stroke-started' | 'stroke-point' | 'stroke-ended' | 'audio-chunk' | 'audio-error' | 'screenshot-captured' | 'time-limit-reached' | 'session-start' | 'navigation' | 'visibility-change';
+export type ReviewCaptureEventType = 'recording-started' | 'recording-stopped' | 'capture-mode-changed' | 'pointer-move' | 'pointer-down' | 'pointer-up' | 'click' | 'key-down' | 'selection-change' | 'drawing-enabled' | 'drawing-disabled' | 'drawing-input-enabled' | 'drawing-input-disabled' | 'stroke-started' | 'stroke-point' | 'stroke-ended' | 'audio-chunk' | 'audio-error' | 'time-limit-reached' | 'session-start' | 'navigation' | 'visibility-change';
 export interface ReviewCaptureEventBase {
     id: number;
     type: ReviewCaptureEventType;
@@ -52,6 +52,7 @@ export interface ReviewSelectionSnapshot {
 }
 export interface ReviewSelectionCaptureEvent extends ReviewCaptureEventBase {
     type: 'selection-change';
+    selectedText?: string;
     selection?: ReviewSelectionSnapshot;
 }
 export interface ReviewCursorSnapshot {
@@ -91,24 +92,6 @@ export interface ReviewAudioErrorEvent extends ReviewCaptureEventBase {
     type: 'audio-error';
     message: string;
 }
-export interface ReviewScreenshot {
-    id: string;
-    trigger: 'stroke' | 'selection';
-    refId: string;
-    capturedAt: string;
-    elapsedMs: number;
-    blob: Blob;
-    width: number;
-    height: number;
-}
-export interface ReviewScreenshotCapturedEvent extends ReviewCaptureEventBase {
-    type: 'screenshot-captured';
-    screenshotId: string;
-    trigger: 'stroke' | 'selection';
-    refId: string;
-    width: number;
-    height: number;
-}
 export interface ReviewTimeLimitReachedEvent extends ReviewCaptureEventBase {
     type: 'time-limit-reached';
     timeLimitMs: number;
@@ -145,7 +128,7 @@ export interface ReviewVisibilityChangeEvent extends ReviewCaptureEventBase {
     type: 'visibility-change';
     state: 'visible' | 'hidden';
 }
-export type ReviewCaptureEvent = ReviewRecordingStateEvent | ReviewCaptureModeEvent | ReviewDrawingStateEvent | ReviewDrawingInputStateEvent | ReviewPointerCaptureEvent | ReviewKeyCaptureEvent | ReviewSelectionCaptureEvent | ReviewStrokeCaptureEvent | ReviewAudioCaptureEvent | ReviewAudioErrorEvent | ReviewScreenshotCapturedEvent | ReviewTimeLimitReachedEvent | ReviewSessionStartEvent | ReviewNavigationCaptureEvent | ReviewVisibilityChangeEvent;
+export type ReviewCaptureEvent = ReviewRecordingStateEvent | ReviewCaptureModeEvent | ReviewDrawingStateEvent | ReviewDrawingInputStateEvent | ReviewPointerCaptureEvent | ReviewKeyCaptureEvent | ReviewSelectionCaptureEvent | ReviewStrokeCaptureEvent | ReviewAudioCaptureEvent | ReviewAudioErrorEvent | ReviewTimeLimitReachedEvent | ReviewSessionStartEvent | ReviewNavigationCaptureEvent | ReviewVisibilityChangeEvent;
 export interface ReviewCaptureSnapshot {
     recording: boolean;
     captureMode: ReviewCaptureMode;
@@ -157,7 +140,6 @@ export interface ReviewCaptureSnapshot {
     lastSelection?: ReviewSelectionSnapshot;
     selections: ReviewSelectionSnapshot[];
     strokes: ReviewStroke[];
-    screenshots: ReviewScreenshot[];
     events: ReviewCaptureEvent[];
 }
 export interface ReviewAudioResult {
@@ -178,14 +160,12 @@ export interface ReviewRecordingResult {
     lastSelection?: ReviewSelectionSnapshot;
     selections: ReviewSelectionSnapshot[];
     strokes: ReviewStroke[];
-    screenshots: ReviewScreenshot[];
     events: ReviewCaptureEvent[];
     audio?: ReviewAudioResult;
     timeLimitReached: boolean;
 }
 export interface ReviewRecorderOptions {
     captureAudio?: boolean;
-    captureScreenshots?: boolean;
     timeLimitMs?: number;
     captureMode?: ReviewCaptureMode;
     eventTarget?: Window;
@@ -207,4 +187,49 @@ export interface ReviewRecorder {
     subscribe(listener: ReviewCaptureListener): () => void;
 }
 export declare function createReviewRecorder(options?: ReviewRecorderOptions): ReviewRecorder;
+export interface ReviewAuthSessionRequest {
+    hubUrl: string;
+    projectId: string;
+    deploymentId: string;
+    email?: string;
+    accessCode: string;
+    subjectId: string;
+}
+export interface ReviewAuthSession {
+    sessionId: string;
+    token: string;
+    expiresAt: string;
+    projectId: string;
+    deploymentId: string;
+    label?: string;
+}
+export interface ReviewAuthSessionStatus {
+    authenticated: boolean;
+    sessionId?: string;
+    expiresAt?: string;
+    projectId?: string;
+    deploymentId?: string;
+    label?: string;
+}
+export interface ReviewAuthSessionStatusOptions {
+    hubUrl: string;
+    authToken: string;
+}
+export interface ReviewSubmitOptions {
+    hubUrl: string;
+    subjectId: string;
+    submittedBy?: string;
+    projectId: string;
+    deploymentId: string;
+    authToken: string;
+    reviewId?: string;
+}
+export interface ReviewSubmitResult {
+    reviewId: string;
+    assetIds: string[];
+    status: string;
+}
+export declare function createReviewAuthSession(options: ReviewAuthSessionRequest): Promise<ReviewAuthSession>;
+export declare function getReviewAuthSession(options: ReviewAuthSessionStatusOptions): Promise<ReviewAuthSessionStatus>;
+export declare function submitReview(result: ReviewRecordingResult, options: ReviewSubmitOptions): Promise<ReviewSubmitResult>;
 export {};

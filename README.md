@@ -1,0 +1,41 @@
+# Zenith Review SDK
+
+Minimal browser SDK for consent-based review recording.
+
+The package owns three things only:
+
+- recording session data: cursor, clicks, key presses, highlighted text, strokes, and audio chunks
+- an opt-in transparent canvas overlay used for drawing while a recording is active
+- runtime review-auth helpers for short-lived Hub review sessions
+
+Normal recording starts in highlight mode and does not mount the drawing overlay. While recording, holding Command temporarily enters drawing mode, mounts the transparent canvas above the host app, and enables drawing input. Releasing Command returns to highlight mode while completed strokes fade out.
+
+## Authenticated Hub submissions
+
+Public staging clients should expose only public configuration such as `hubUrl`, `projectId`, and `deploymentId`. Do not bundle durable review tokens, access codes, or owner secrets in frontend code or public environment variables.
+
+Before calling `submitReview`, authenticate the reviewer at runtime and keep the returned token in memory or `sessionStorage`:
+
+```ts
+import { createReviewAuthSession, submitReview } from '@zenith/review-sdk'
+
+const session = await createReviewAuthSession({
+  hubUrl,
+  projectId,
+  deploymentId,
+  email,
+  accessCode,
+  subjectId: window.location.href,
+})
+
+await submitReview(recording, {
+  hubUrl,
+  subjectId: window.location.href,
+  projectId,
+  deploymentId,
+  authToken: session.token,
+  submittedBy: session.label,
+})
+```
+
+`createReviewAuthSession` posts to Hub's `/v1/review-auth/session` endpoint and returns the raw short-lived token once. The SDK does not persist that token. `submitReview` requires `projectId`, `deploymentId`, and `authToken`; it sends the Bearer token on asset and review submission and includes project/deployment identifiers in the Hub payloads.

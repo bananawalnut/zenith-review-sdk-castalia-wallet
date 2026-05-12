@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Runtime review auth session helpers (`createReviewAuthSession`, `getReviewAuthSession`) and exported auth/session types — lets public staging clients authenticate against Hub for short-lived review intake tokens without bundling durable frontend secrets.
+- Authenticated review submission fields and headers — binds asset uploads and review JSON payloads to Hub project/deployment scope so Hub can enforce the review session contract.
 - `captureScreenshots` option (default `true`) — uses `getDisplayMedia` to grab a WebP screenshot on every stroke-ended and committed text selection; falls back gracefully if permission is denied or `ImageCapture` is unavailable. Combines screen capture and microphone into a single permission dialog when both are active.
 - `timeLimitMs` option (default `420000`, 7 minutes) — auto-calls `stop()` and emits `time-limit-reached` event when the limit is reached; `0` disables the limit.
 - `ReviewScreenshot` type and `screenshots` field on `ReviewRecordingResult` and `ReviewCaptureSnapshot`.

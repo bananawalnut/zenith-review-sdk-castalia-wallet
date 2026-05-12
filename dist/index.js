@@ -147,9 +147,6 @@ class BrowserReviewRecorder {
     mediaRecorder;
     audioChunks = [];
     audioMimeType = '';
-    imageCapture;
-    screenshots = [];
-    screenshotId = 0;
     timeLimitReached = false;
     timeLimitTimer;
     sessionContext;
@@ -173,7 +170,6 @@ class BrowserReviewRecorder {
     constructor(options = {}) {
         this.options = {
             captureAudio: options.captureAudio ?? true,
-            captureScreenshots: options.captureScreenshots ?? true,
             timeLimitMs: options.timeLimitMs ?? 420_000,
             captureMode: options.captureMode ?? 'highlight',
             pointerMoveThrottleMs: options.pointerMoveThrottleMs ?? 64,
@@ -209,8 +205,6 @@ class BrowserReviewRecorder {
         this.selections = [];
         this.lastSelectionKey = '';
         this.audioChunks = [];
-        this.screenshots = [];
-        this.screenshotId = 0;
         this.timeLimitReached = false;
         this.lastKnownUrl = this.targetWindow.location.href;
         this.lastKnownTitle = this.document.title;
@@ -263,7 +257,6 @@ class BrowserReviewRecorder {
         this.clearPendingPointerNotification();
         this.disposers.forEach(dispose => dispose());
         this.disposers = [];
-        this.imageCapture = undefined;
         this.titleObserver?.disconnect();
         this.titleObserver = undefined;
         if (this.originalPushState) {
@@ -316,7 +309,6 @@ class BrowserReviewRecorder {
                 rects: [...selection.rects],
             })),
             strokes: this.strokes.map(stroke => ({ ...stroke, points: [...stroke.points] })),
-            screenshots: [...this.screenshots],
             events: [...this.events],
         };
     }
@@ -578,8 +570,7 @@ class BrowserReviewRecorder {
         this.lastSelection = nextSelection;
         this.selections.push(nextSelection);
         this.lastSelectionKey = selectionKey;
-        this.log({ type: 'selection-change', selection: nextSelection });
-        void this.takeScreenshot('selection', selectionKey.slice(0, 64));
+        this.log({ type: 'selection-change', selectedText: text, selection: nextSelection });
     }
     clearCurrentSelection() {
         this.selection = undefined;
@@ -784,7 +775,6 @@ class BrowserReviewRecorder {
                 pointCount: this.activeStroke.points.length,
                 bounds: this.activeStroke.bounds,
             });
-            void this.takeScreenshot('stroke', this.activeStroke.id);
         }
         this.strokeCandidate = undefined;
         this.activeStroke = undefined;
@@ -870,47 +860,7 @@ class BrowserReviewRecorder {
         });
     }
     async startMediaCapture() {
-        // When captureScreenshots is enabled, use getDisplayMedia to get screen video + audio
-        // in a single permission request. Fall back to getUserMedia (audio only) on denial.
-        if (this.options.captureScreenshots) {
-            try {
-                const displayStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: { frameRate: 1 },
-                    audio: this.options.captureAudio,
-                });
-                this.stream = displayStream;
-                const videoTracks = displayStream.getVideoTracks();
-                if (videoTracks[0] && typeof ImageCapture !== 'undefined') {
-                    this.imageCapture = new ImageCapture(videoTracks[0]);
-                }
-                // If getDisplayMedia returned audio, use it. Otherwise fall through to getUserMedia.
-                const hasAudio = displayStream.getAudioTracks().length > 0;
-                if (this.options.captureAudio && !hasAudio) {
-                    try {
-                        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        micStream.getAudioTracks().forEach(track => this.stream.addTrack(track));
-                    }
-                    catch {
-                        // Mic fallback denied — audio capture skipped
-                    }
-                }
-            }
-            catch {
-                // getDisplayMedia denied — fall back to audio-only if requested
-                if (this.options.captureAudio) {
-                    try {
-                        this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    }
-                    catch (error) {
-                        this.log({
-                            type: 'audio-error',
-                            message: error instanceof Error ? error.message : 'Microphone capture failed.',
-                        });
-                    }
-                }
-            }
-        }
-        else if (this.options.captureAudio) {
+        if (this.options.captureAudio) {
             try {
                 this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             }
@@ -953,44 +903,6 @@ class BrowserReviewRecorder {
         this.stream = undefined;
         this.mediaRecorder = undefined;
     }
-    async takeScreenshot(trigger, refId) {
-        const imageCapture = this.imageCapture;
-        if (!imageCapture)
-            return;
-        try {
-            const bitmap = await imageCapture.grabFrame();
-            const canvas = this.document.createElement('canvas');
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
-            canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
-            bitmap.close();
-            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.85));
-            if (!blob)
-                return;
-            const screenshot = {
-                id: `screenshot-${++this.screenshotId}`,
-                trigger,
-                refId,
-                capturedAt: new Date().toISOString(),
-                elapsedMs: this.getElapsedMs(),
-                blob,
-                width: bitmap.width,
-                height: bitmap.height,
-            };
-            this.screenshots.push(screenshot);
-            this.log({
-                type: 'screenshot-captured',
-                screenshotId: screenshot.id,
-                trigger,
-                refId,
-                width: screenshot.width,
-                height: screenshot.height,
-            });
-        }
-        catch {
-            // Screenshot capture failures are non-fatal — the review continues
-        }
-    }
     buildResult() {
         const stoppedAt = new Date().toISOString();
         const audioBlob = this.audioChunks.length > 0
@@ -1017,7 +929,6 @@ class BrowserReviewRecorder {
                 rects: [...selection.rects],
             })),
             strokes: this.strokes.map(stroke => ({ ...stroke, points: [...stroke.points] })),
-            screenshots: [...this.screenshots],
             events: [...this.events],
             timeLimitReached: this.timeLimitReached,
             audio: audioBlob ? {
@@ -1032,4 +943,117 @@ class BrowserReviewRecorder {
 }
 export function createReviewRecorder(options) {
     return new BrowserReviewRecorder(options);
+}
+function buildHubUrl(hubUrl, path) {
+    return `${hubUrl.replace(/\/+$/, '')}${path}`;
+}
+function requireReviewAuthOptions(options) {
+    if (!options.projectId)
+        throw new Error('Review submit requires projectId');
+    if (!options.deploymentId)
+        throw new Error('Review submit requires deploymentId');
+    if (!options.authToken)
+        throw new Error('Review submit requires authToken from createReviewAuthSession');
+}
+function normalizeReviewAuthSession(data) {
+    return {
+        sessionId: data.session_id,
+        token: data.token,
+        expiresAt: data.expires_at,
+        projectId: data.project_id,
+        deploymentId: data.deployment_id,
+        label: data.label,
+    };
+}
+function normalizeReviewAuthSessionStatus(data) {
+    return {
+        authenticated: data.authenticated,
+        sessionId: data.session_id,
+        expiresAt: data.expires_at,
+        projectId: data.project_id,
+        deploymentId: data.deployment_id,
+        label: data.label,
+    };
+}
+export async function createReviewAuthSession(options) {
+    const body = {
+        project_id: options.projectId,
+        deployment_id: options.deploymentId,
+        email: options.email,
+        access_code: options.accessCode,
+        subject_id: options.subjectId,
+    };
+    const res = await fetch(buildHubUrl(options.hubUrl, '/v1/review-auth/session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok)
+        throw new Error(`Review auth session failed: ${res.status}`);
+    return normalizeReviewAuthSession(await res.json());
+}
+export async function getReviewAuthSession(options) {
+    const res = await fetch(buildHubUrl(options.hubUrl, '/v1/review-auth/session'), {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${options.authToken}` },
+    });
+    if (!res.ok)
+        throw new Error(`Review auth session status failed: ${res.status}`);
+    return normalizeReviewAuthSessionStatus(await res.json());
+}
+async function uploadAsset(options, blob, assetType, mimeType) {
+    const form = new FormData();
+    form.append('file', new Blob([blob], { type: mimeType ?? blob.type }), 'asset');
+    form.append('asset_type', assetType);
+    form.append('project_id', options.projectId);
+    form.append('deployment_id', options.deploymentId);
+    const res = await fetch(buildHubUrl(options.hubUrl, '/v1/reviews/assets'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${options.authToken}` },
+        body: form,
+    });
+    if (!res.ok)
+        throw new Error(`Asset upload failed: ${res.status}`);
+    const data = await res.json();
+    return data.asset_id;
+}
+export async function submitReview(result, options) {
+    requireReviewAuthOptions(options);
+    const { hubUrl, subjectId, submittedBy, projectId, deploymentId, authToken } = options;
+    const reviewId = options.reviewId ?? crypto.randomUUID();
+    const assetIds = [];
+    const uploadOptions = { hubUrl, projectId, deploymentId, authToken };
+    const eventsBlob = new Blob([JSON.stringify(result.events)], { type: 'application/json' });
+    assetIds.push(await uploadAsset(uploadOptions, eventsBlob, 'events', 'application/json'));
+    if (result.audio) {
+        assetIds.push(await uploadAsset(uploadOptions, result.audio.blob, 'audio', result.audio.mimeType));
+    }
+    const body = {
+        review_id: reviewId,
+        subject_id: subjectId,
+        project_id: projectId,
+        deployment_id: deploymentId,
+        started_at: result.startedAt,
+        stopped_at: result.stoppedAt,
+        duration_ms: result.durationMs,
+        asset_ids: assetIds,
+        metadata: {
+            stroke_count: result.strokes.length,
+            event_count: result.events.length,
+        },
+    };
+    if (submittedBy)
+        body.submitted_by = submittedBy;
+    const res = await fetch(buildHubUrl(hubUrl, '/v1/reviews'), {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok)
+        throw new Error(`Review submit failed: ${res.status}`);
+    const data = await res.json();
+    return { reviewId: data.review_id, assetIds, status: data.status };
 }

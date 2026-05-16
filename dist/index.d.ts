@@ -215,6 +215,58 @@ export interface ReviewAuthSessionStatusOptions {
     hubUrl: string;
     authToken: string;
 }
+export type ReviewAuthSessionStorage = 'none' | 'session';
+export interface ReviewAuthOverlayOptions extends Omit<ReviewAuthSessionRequest, 'accessCode' | 'email'> {
+    email?: string;
+    title?: string;
+    message?: string;
+    emailPlaceholder?: string;
+    accessCodePlaceholder?: string;
+    submitLabel?: string;
+    cancelLabel?: string;
+    brandLabel?: string;
+    zIndex?: number;
+}
+export interface AuthenticateReviewSessionOptions extends ReviewAuthOverlayOptions {
+    storage?: ReviewAuthSessionStorage;
+    storageKey?: string;
+    validateStoredSession?: boolean;
+}
+export declare function getStoredReviewAuthSession(storageKey: string): ReviewAuthSession | null;
+export declare function storeReviewAuthSession(storageKey: string, session: ReviewAuthSession | null): void;
+export declare function clearStoredReviewAuthSession(storageKey: string): void;
+export declare function openReviewAuthOverlay(options: ReviewAuthOverlayOptions): Promise<ReviewAuthSession>;
+export declare function authenticateReviewSession(options: AuthenticateReviewSessionOptions): Promise<ReviewAuthSession>;
+export type ReviewAuthSessionListener = (session: ReviewAuthSession | null) => void;
+export type ReviewAuthLoginTrigger = (options: AuthenticateReviewSessionOptions) => Promise<ReviewAuthSession>;
+export interface ReviewAuthSessionManagerOptions extends AuthenticateReviewSessionOptions {
+    onSessionChange?: ReviewAuthSessionListener;
+    login?: ReviewAuthLoginTrigger;
+}
+export interface ReviewAuthSessionManager {
+    readonly session: ReviewAuthSession | null;
+    getSession(): ReviewAuthSession | null;
+    restore(): Promise<ReviewAuthSession | null>;
+    login(): Promise<ReviewAuthSession>;
+    logout(): void;
+    validate(): Promise<ReviewAuthSession | null>;
+    withSession<T>(action: (session: ReviewAuthSession) => Promise<T> | T): Promise<T>;
+    subscribe(listener: ReviewAuthSessionListener): () => void;
+}
+export declare function createReviewAuthSessionManager(options: ReviewAuthSessionManagerOptions): ReviewAuthSessionManager;
+export interface ZenithAdminOverlayOptions {
+    manager: ReviewAuthSessionManager;
+    label?: string;
+    zIndex?: number;
+    onOpen?: (session: ReviewAuthSession) => void;
+    onLoginRequest?: () => void | Promise<void>;
+    container?: HTMLElement;
+}
+export interface ZenithAdminOverlayHandle {
+    destroy(): void;
+    update(session?: ReviewAuthSession | null): void;
+}
+export declare function renderZenithAdminOverlay(options: ZenithAdminOverlayOptions): ZenithAdminOverlayHandle;
 export interface ReviewSubmitOptions {
     hubUrl: string;
     subjectId: string;
@@ -223,6 +275,7 @@ export interface ReviewSubmitOptions {
     deploymentId: string;
     authToken: string;
     reviewId?: string;
+    signal?: AbortSignal;
 }
 export interface ReviewSubmitResult {
     reviewId: string;

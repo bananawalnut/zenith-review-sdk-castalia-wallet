@@ -1394,6 +1394,540 @@ export interface ReviewAuthSessionStatusOptions {
   authToken: string
 }
 
+
+export type ReviewAuthSessionStorage = 'none' | 'session'
+
+export interface ReviewAuthOverlayOptions extends Omit<ReviewAuthSessionRequest, 'accessCode' | 'email'> {
+  email?: string
+  title?: string
+  message?: string
+  emailPlaceholder?: string
+  accessCodePlaceholder?: string
+  submitLabel?: string
+  cancelLabel?: string
+  brandLabel?: string
+  zIndex?: number
+}
+
+export interface AuthenticateReviewSessionOptions extends ReviewAuthOverlayOptions {
+  storage?: ReviewAuthSessionStorage
+  storageKey?: string
+  validateStoredSession?: boolean
+}
+
+function getDefaultReviewAuthStorageKey(options: Pick<ReviewAuthSessionRequest, 'hubUrl' | 'projectId' | 'deploymentId'>): string {
+  return `zenith.review-auth.v1:${options.hubUrl.replace(/\/+$/, '')}:${options.projectId}:${options.deploymentId}`
+}
+
+function isReviewAuthSessionFresh(session: ReviewAuthSession | null | undefined): session is ReviewAuthSession {
+  if (!session?.token) return false
+  if (!session.expiresAt) return true
+  const expiresAt = Date.parse(session.expiresAt)
+  return Number.isFinite(expiresAt) && expiresAt > Date.now()
+}
+
+export function getStoredReviewAuthSession(storageKey: string): ReviewAuthSession | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const raw = window.sessionStorage.getItem(storageKey)
+    if (!raw) return null
+    const session = JSON.parse(raw) as ReviewAuthSession
+    if (!isReviewAuthSessionFresh(session)) {
+      try {
+        window.sessionStorage.removeItem(storageKey)
+      } catch {
+        // Treat storage failures like a missing stored session.
+      }
+      return null
+    }
+    return session
+  } catch {
+    try {
+      window.sessionStorage.removeItem(storageKey)
+    } catch {
+      // Treat storage failures like a missing stored session.
+    }
+    return null
+  }
+}
+
+export function storeReviewAuthSession(storageKey: string, session: ReviewAuthSession | null): void {
+  if (typeof window === 'undefined') return
+
+  try {
+    if (!session) {
+      window.sessionStorage.removeItem(storageKey)
+      return
+    }
+
+    window.sessionStorage.setItem(storageKey, JSON.stringify(session))
+  } catch {
+    // Auth still works in memory when browser storage is unavailable.
+  }
+}
+
+export function clearStoredReviewAuthSession(storageKey: string): void {
+  storeReviewAuthSession(storageKey, null)
+}
+
+async function validateStoredReviewAuthSession(
+  options: Pick<ReviewAuthSessionRequest, 'hubUrl' | 'projectId' | 'deploymentId'>,
+  session: ReviewAuthSession,
+): Promise<ReviewAuthSession | null> {
+  try {
+    const status = await getReviewAuthSession({ hubUrl: options.hubUrl, authToken: session.token })
+    if (
+      status.authenticated
+      && status.projectId === options.projectId
+      && status.deploymentId === options.deploymentId
+    ) {
+      return session
+    }
+  } catch {
+    // Fall through to fresh overlay auth.
+  }
+  return null
+}
+
+function escapeReviewAuthHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function createReviewAuthOverlayStyles(): string {
+  return `
+    :host { all: initial; color-scheme: dark; }
+    *, *::before, *::after { box-sizing: border-box; }
+    .zr-backdrop {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(124, 58, 237, 0.22), transparent 32rem),
+        radial-gradient(circle at 80% 10%, rgba(245, 158, 11, 0.15), transparent 28rem),
+        rgba(3, 7, 18, 0.72);
+      backdrop-filter: blur(18px) saturate(1.08);
+      -webkit-backdrop-filter: blur(18px) saturate(1.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .zr-card {
+      width: min(420px, calc(100vw - 32px));
+      border: 1px solid rgba(167, 139, 250, 0.42);
+      border-radius: 24px;
+      background:
+        linear-gradient(135deg, rgba(17, 24, 39, 0.96), rgba(10, 13, 24, 0.94)),
+        radial-gradient(circle at top left, rgba(245, 158, 11, 0.16), transparent 18rem);
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.56), 0 0 0 1px rgba(255,255,255,0.04) inset;
+      color: #f8fafc;
+      overflow: hidden;
+    }
+    .zr-header { padding: 24px 24px 18px; border-bottom: 1px solid rgba(148, 163, 184, 0.14); }
+    .zr-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; color: #c4b5fd; font-size: 12px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; }
+    .zr-mark { width: 26px; height: 26px; border-radius: 9px; display: grid; place-items: center; color: #111827; background: linear-gradient(135deg, #f59e0b, #ec4899 48%, #8b5cf6); font-weight: 900; letter-spacing: 0; box-shadow: 0 0 24px rgba(139, 92, 246, 0.48); }
+    h2 { margin: 0; color: #fff; font-size: 24px; line-height: 1.12; font-weight: 760; letter-spacing: -0.035em; }
+    p { margin: 10px 0 0; color: #cbd5e1; font-size: 14px; line-height: 1.55; }
+    form { display: grid; gap: 16px; padding: 22px 24px 24px; }
+    label { display: grid; gap: 8px; color: #a5b4fc; font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+    input {
+      width: 100%;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.72);
+      color: #f8fafc;
+      font: 500 15px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      outline: none;
+      padding: 13px 14px;
+      transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    }
+    input::placeholder { color: rgba(148, 163, 184, 0.72); }
+    input:focus { border-color: rgba(245, 158, 11, 0.82); background: rgba(15, 23, 42, 0.95); box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12); }
+    .zr-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; padding-top: 4px; }
+    button { appearance: none; border: 0; border-radius: 999px; cursor: pointer; font: 800 13px/1 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.06em; text-transform: uppercase; padding: 13px 16px; }
+    button:disabled { cursor: not-allowed; opacity: 0.7; }
+    .zr-cancel { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; }
+    .zr-submit { min-width: 150px; color: #111827; background: linear-gradient(135deg, #f59e0b, #ec4899 54%, #8b5cf6); box-shadow: 0 12px 26px rgba(236, 72, 153, 0.24); }
+    .zr-error { display: none; border: 1px solid rgba(248, 113, 113, 0.36); border-radius: 14px; background: rgba(127, 29, 29, 0.28); color: #fecaca; padding: 11px 12px; font-size: 13px; line-height: 1.4; }
+    .zr-error[data-visible="true"] { display: block; }
+    @media (max-width: 520px) { .zr-backdrop { padding: 16px; } .zr-header, form { padding-left: 18px; padding-right: 18px; } .zr-actions { flex-direction: column-reverse; align-items: stretch; } button { width: 100%; } }
+  `
+}
+
+export function openReviewAuthOverlay(options: ReviewAuthOverlayOptions): Promise<ReviewAuthSession> {
+  if (typeof document === 'undefined') {
+    return Promise.reject(new Error('Review auth overlay requires a browser document'))
+  }
+
+  return new Promise((resolve, reject) => {
+    const host = document.createElement('div')
+    host.style.position = 'fixed'
+    host.style.inset = '0'
+    host.style.zIndex = String(options.zIndex ?? 2147483200)
+    const shadow = host.attachShadow({ mode: 'closed' })
+
+    const style = document.createElement('style')
+    style.textContent = createReviewAuthOverlayStyles()
+    shadow.append(style)
+
+    const backdrop = document.createElement('div')
+    backdrop.className = 'zr-backdrop'
+    backdrop.setAttribute('role', 'dialog')
+    backdrop.setAttribute('aria-modal', 'true')
+    backdrop.setAttribute('aria-labelledby', 'zr-title')
+    const brandLabel = escapeReviewAuthHtml(options.brandLabel ?? 'Zenith Review')
+    const title = escapeReviewAuthHtml(options.title ?? 'Reviewer access')
+    const message = escapeReviewAuthHtml(options.message ?? 'This staging surface is protected. Enter your reviewer code to continue.')
+    const emailPlaceholder = escapeReviewAuthHtml(options.emailPlaceholder ?? 'reviewer@example.com')
+    const accessCodePlaceholder = escapeReviewAuthHtml(options.accessCodePlaceholder ?? 'Review access code')
+    const cancelLabel = escapeReviewAuthHtml(options.cancelLabel ?? 'Cancel')
+    const submitLabel = escapeReviewAuthHtml(options.submitLabel ?? 'Authenticate')
+    backdrop.innerHTML = `
+      <section class="zr-card">
+        <div class="zr-header">
+          <div class="zr-brand"><span class="zr-mark">Z</span><span>${brandLabel}</span></div>
+          <h2 id="zr-title">${title}</h2>
+          <p>${message}</p>
+        </div>
+        <form>
+          <label><span>Email optional</span><input name="email" type="email" autocomplete="email" placeholder="${emailPlaceholder}"></label>
+          <label><span>Access code</span><input name="accessCode" type="password" autocomplete="one-time-code" required placeholder="${accessCodePlaceholder}"></label>
+          <div class="zr-error" role="alert"></div>
+          <div class="zr-actions"><button class="zr-cancel" type="button">${cancelLabel}</button><button class="zr-submit" type="submit">${submitLabel}</button></div>
+        </form>
+      </section>
+    `
+    shadow.append(backdrop)
+    document.body.append(host)
+
+    const form = backdrop.querySelector('form') as HTMLFormElement
+    const emailInput = form.elements.namedItem('email') as HTMLInputElement
+    const accessCodeInput = form.elements.namedItem('accessCode') as HTMLInputElement
+    const submitButton = backdrop.querySelector('.zr-submit') as HTMLButtonElement
+    const cancelButton = backdrop.querySelector('.zr-cancel') as HTMLButtonElement
+    const errorNode = backdrop.querySelector('.zr-error') as HTMLDivElement
+    const initialFocus = accessCodeInput
+
+    let settled = false
+    const cleanup = () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      host.remove()
+    }
+    const settleReject = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+    const setPending = (pending: boolean) => {
+      emailInput.disabled = pending
+      accessCodeInput.disabled = pending
+      submitButton.disabled = pending
+      cancelButton.disabled = pending
+      submitButton.textContent = pending ? 'Authenticating…' : (options.submitLabel ?? 'Authenticate')
+    }
+    const showError = (message: string) => {
+      errorNode.textContent = message
+      errorNode.dataset.visible = 'true'
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') settleReject(new Error('Review authentication cancelled.'))
+    }
+
+    cancelButton.addEventListener('click', () => settleReject(new Error('Review authentication cancelled.')))
+    form.addEventListener('submit', event => {
+      event.preventDefault()
+      const accessCode = accessCodeInput.value.trim()
+      if (!accessCode) {
+        showError('Enter the reviewer access code.')
+        accessCodeInput.focus()
+        return
+      }
+
+      setPending(true)
+      errorNode.dataset.visible = 'false'
+      void createReviewAuthSession({
+        hubUrl: options.hubUrl,
+        projectId: options.projectId,
+        deploymentId: options.deploymentId,
+        subjectId: options.subjectId,
+        email: emailInput.value.trim() || undefined,
+        accessCode,
+      }).then(session => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(session)
+      }).catch(error => {
+        setPending(false)
+        showError(error instanceof Error ? error.message : 'Review authentication failed.')
+      })
+    })
+
+    document.addEventListener('keydown', handleKeyDown)
+    window.setTimeout(() => initialFocus.focus(), 0)
+  })
+}
+
+export async function authenticateReviewSession(options: AuthenticateReviewSessionOptions): Promise<ReviewAuthSession> {
+  const storage = options.storage ?? 'session'
+  const storageKey = options.storageKey ?? getDefaultReviewAuthStorageKey(options)
+
+  if (storage === 'session') {
+    const storedSession = getStoredReviewAuthSession(storageKey)
+    if (storedSession) {
+      const validated = options.validateStoredSession === false
+        ? storedSession
+        : await validateStoredReviewAuthSession(options, storedSession)
+      if (validated) return validated
+      clearStoredReviewAuthSession(storageKey)
+    }
+  }
+
+  const session = await openReviewAuthOverlay(options)
+  if (storage === 'session') storeReviewAuthSession(storageKey, session)
+  return session
+}
+
+export type ReviewAuthSessionListener = (session: ReviewAuthSession | null) => void
+export type ReviewAuthLoginTrigger = (options: AuthenticateReviewSessionOptions) => Promise<ReviewAuthSession>
+
+export interface ReviewAuthSessionManagerOptions extends AuthenticateReviewSessionOptions {
+  onSessionChange?: ReviewAuthSessionListener
+  login?: ReviewAuthLoginTrigger
+}
+
+export interface ReviewAuthSessionManager {
+  readonly session: ReviewAuthSession | null
+  getSession(): ReviewAuthSession | null
+  restore(): Promise<ReviewAuthSession | null>
+  login(): Promise<ReviewAuthSession>
+  logout(): void
+  validate(): Promise<ReviewAuthSession | null>
+  withSession<T>(action: (session: ReviewAuthSession) => Promise<T> | T): Promise<T>
+  subscribe(listener: ReviewAuthSessionListener): () => void
+}
+
+class BrowserReviewAuthSessionManager implements ReviewAuthSessionManager {
+  private currentSession: ReviewAuthSession | null = null
+  private readonly listeners = new Set<ReviewAuthSessionListener>()
+  private readonly storage: ReviewAuthSessionStorage
+  private readonly storageKey: string
+  private readonly loginTrigger: ReviewAuthLoginTrigger
+
+  constructor(private readonly options: ReviewAuthSessionManagerOptions) {
+    this.storage = options.storage ?? 'session'
+    this.storageKey = options.storageKey ?? getDefaultReviewAuthStorageKey(options)
+    this.loginTrigger = options.login ?? authenticateReviewSession
+    if (options.onSessionChange) this.listeners.add(options.onSessionChange)
+  }
+
+  get session(): ReviewAuthSession | null {
+    return this.currentSession
+  }
+
+  getSession(): ReviewAuthSession | null {
+    return this.currentSession
+  }
+
+  async restore(): Promise<ReviewAuthSession | null> {
+    if (this.storage !== 'session') {
+      this.setSession(null)
+      return null
+    }
+
+    const storedSession = getStoredReviewAuthSession(this.storageKey)
+    if (!storedSession) {
+      this.setSession(null)
+      return null
+    }
+
+    const session = this.options.validateStoredSession === false
+      ? storedSession
+      : await validateStoredReviewAuthSession(this.options, storedSession)
+
+    if (!session) {
+      clearStoredReviewAuthSession(this.storageKey)
+      this.setSession(null)
+      return null
+    }
+
+    this.setSession(session)
+    return session
+  }
+
+  async login(): Promise<ReviewAuthSession> {
+    const session = await this.loginTrigger({
+      ...this.options,
+      storage: 'none',
+      storageKey: this.storageKey,
+    })
+    this.setSession(session)
+    return session
+  }
+
+  logout(): void {
+    clearStoredReviewAuthSession(this.storageKey)
+    this.setSession(null)
+  }
+
+  async validate(): Promise<ReviewAuthSession | null> {
+    if (!this.currentSession) return null
+    const session = await validateStoredReviewAuthSession(this.options, this.currentSession)
+    if (!session) {
+      this.logout()
+      return null
+    }
+    this.setSession(session)
+    return session
+  }
+
+  async withSession<T>(action: (session: ReviewAuthSession) => Promise<T> | T): Promise<T> {
+    const session = this.currentSession ?? await this.restore() ?? await this.login()
+    return action(session)
+  }
+
+  subscribe(listener: ReviewAuthSessionListener): () => void {
+    this.listeners.add(listener)
+    listener(this.currentSession)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  private setSession(session: ReviewAuthSession | null): void {
+    this.currentSession = session
+    if (this.storage === 'session') storeReviewAuthSession(this.storageKey, session)
+    this.listeners.forEach(listener => listener(session))
+  }
+}
+
+export function createReviewAuthSessionManager(options: ReviewAuthSessionManagerOptions): ReviewAuthSessionManager {
+  return new BrowserReviewAuthSessionManager(options)
+}
+
+const ZENITH_ADMIN_MARK_PATH = 'M109.356 0H65.3503L0 83.6345V128H65.3503L0 211.637V256H185.25V222.995H34.8395L109.356 128H185.25V94.9946H34.8395L109.356 0Z'
+const ZENITH_ADMIN_MARK_GRADIENT_PATH = 'M164.698 0H98.4224L0 125.778V192.501H98.4224L0 318.283V385H279V335.363H52.4707L164.698 192.501H279V142.863H52.4707L164.698 0Z'
+
+export interface ZenithAdminOverlayOptions {
+  manager: ReviewAuthSessionManager
+  label?: string
+  zIndex?: number
+  onOpen?: (session: ReviewAuthSession) => void
+  onLoginRequest?: () => void | Promise<void>
+  container?: HTMLElement
+}
+
+export interface ZenithAdminOverlayHandle {
+  destroy(): void
+  update(session?: ReviewAuthSession | null): void
+}
+
+function createZenithAdminOverlayStyles(): string {
+  return `
+    :host { all: initial; color-scheme: dark; }
+    *, *::before, *::after { box-sizing: border-box; }
+    .za-root { position: fixed; right: 18px; top: 50%; z-index: var(--za-z-index); transform: translateY(-50%); isolation: isolate; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .za-root::before { content: ''; position: absolute; inset: -20px; z-index: -1; border-radius: 999px; background: radial-gradient(circle, rgba(3, 7, 18, 0.82) 0%, rgba(3, 7, 18, 0.44) 44%, transparent 72%); filter: blur(8px); pointer-events: none; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    .za-button { position: relative; width: 40px; height: 40px; border: 1px solid transparent; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: transparent; color: #f8fafc; cursor: pointer; padding: 0; transition: background 150ms ease, border-color 150ms ease, color 150ms ease; }
+    .za-button:hover, .za-button:focus-visible { border-color: transparent; background: transparent; outline: 2px solid #9BFBE3; outline-offset: 2px; }
+    .za-mark { position: absolute; display: inline-flex; width: calc(32px * 0.7265625); height: 32px; align-items: center; justify-content: center; transition: opacity 150ms ease, filter 300ms ease, transform 300ms ease; }
+    .za-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .za-mark--rest path { fill: #9BFBE3; }
+    .za-mark--alive { opacity: 0; transform: scale(0.94); filter: drop-shadow(0 0 0 rgba(155, 251, 227, 0.48)); }
+    .za-button:hover .za-mark--rest, .za-button:focus-visible .za-mark--rest { opacity: 0; transform: scale(0.96); }
+    .za-button:hover .za-mark--alive, .za-button:focus-visible .za-mark--alive { opacity: 1; animation: za-zenith-pulse 2.4s ease-in-out infinite; }
+    .za-tooltip { position: absolute; right: calc(100% + 8px); top: 50%; padding: 4px 8px; transform: translateY(-50%); border: 1px solid rgba(155, 251, 227, 0.28); border-radius: 8px; background: rgba(3, 7, 18, 0.78); color: #f8fafc; box-shadow: 0 18px 54px rgba(0, 0, 0, 0.46); font-size: 11px; font-weight: 700; letter-spacing: 0; opacity: 0; pointer-events: none; white-space: nowrap; backdrop-filter: blur(18px) saturate(1.08); -webkit-backdrop-filter: blur(18px) saturate(1.08); transition: opacity 150ms ease, transform 150ms ease; }
+    .za-button:hover .za-tooltip, .za-button:focus-visible .za-tooltip { opacity: 1; transform: translate(-4px, -50%); }
+    .za-popover { position: absolute; right: calc(100% + 10px); top: calc(50% + 28px); min-width: 210px; border: 1px solid rgba(155, 251, 227, 0.38); border-radius: 16px; background: rgba(3, 7, 18, 0.88); color: #f8fafc; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5); backdrop-filter: blur(18px) saturate(1.08); -webkit-backdrop-filter: blur(18px) saturate(1.08); padding: 12px; display: none; }
+    .za-root[data-open="true"] .za-popover { display: grid; gap: 8px; }
+    .za-eyebrow { color: #9BFBE3; font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+    .za-label { color: #e2e8f0; font-size: 13px; line-height: 1.35; }
+    .za-action { border: 1px solid rgba(155, 251, 227, 0.36); border-radius: 10px; background: rgba(155, 251, 227, 0.08); color: #f8fafc; cursor: pointer; font: 700 12px/1 ui-sans-serif, system-ui, sans-serif; padding: 9px 10px; text-align: left; }
+    .za-action:hover { background: rgba(155, 251, 227, 0.14); }
+    @keyframes za-zenith-pulse { 0%, 100% { filter: drop-shadow(0 0 0 rgba(155, 251, 227, 0.48)); transform: scale(1); } 45% { filter: drop-shadow(0 0 16px rgba(155, 251, 227, 0.48)); transform: scale(1.08); } }
+    @media (prefers-reduced-motion: reduce) { .za-button:hover .za-mark--alive, .za-button:focus-visible .za-mark--alive { animation: none; } }
+  `
+}
+
+export function renderZenithAdminOverlay(options: ZenithAdminOverlayOptions): ZenithAdminOverlayHandle {
+  if (typeof document === 'undefined') throw new Error('Zenith admin overlay requires a browser document')
+
+  const host = document.createElement('div')
+  const shadow = host.attachShadow({ mode: 'closed' })
+  const style = document.createElement('style')
+  style.textContent = createZenithAdminOverlayStyles()
+  shadow.append(style)
+
+  const root = document.createElement('div')
+  root.className = 'za-root'
+  root.style.setProperty('--za-z-index', String(options.zIndex ?? 2147483000))
+  const gradientId = 'za-zenith-aqua-gradient'
+  root.innerHTML = `
+    <button class="za-button" type="button" aria-label="Zenith admin" title="Zenith admin">
+      <span class="za-mark za-mark--rest" aria-hidden="true"><svg viewBox="0 0 186 256" role="img"><path d="${ZENITH_ADMIN_MARK_PATH}"></path></svg></span>
+      <span class="za-mark za-mark--alive" aria-hidden="true"><svg viewBox="0 0 279 385" role="img"><path d="${ZENITH_ADMIN_MARK_GRADIENT_PATH}" fill="url(#${gradientId})"></path><defs><linearGradient id="${gradientId}" x1="139.5" y1="0" x2="139.5" y2="385" gradientUnits="userSpaceOnUse"><stop stop-color="#9BFBE3"></stop><stop offset="1" stop-color="#02B286"></stop></linearGradient></defs></svg></span>
+      <span class="za-tooltip">Zenith admin</span>
+    </button>
+    <section class="za-popover" aria-label="Zenith admin panel">
+      <div class="za-eyebrow">Zenith admin</div>
+      <div class="za-label"></div>
+      <button class="za-action" type="button"></button>
+    </section>
+  `
+  shadow.append(root)
+  ;(options.container ?? document.body).append(host)
+
+  const labelNode = root.querySelector('.za-label') as HTMLDivElement
+  const button = root.querySelector('.za-button') as HTMLButtonElement
+  const action = root.querySelector('.za-action') as HTMLButtonElement
+  let session = options.manager.getSession()
+  let open = false
+
+  function render(nextSession: ReviewAuthSession | null = options.manager.getSession()) {
+    session = nextSession
+    labelNode.textContent = session
+      ? `${options.label ?? 'Authenticated'}${session.label ? ` · ${session.label}` : ''}`
+      : 'Not authenticated'
+    action.textContent = session ? 'Open admin panel' : 'Log in'
+    root.dataset.open = open ? 'true' : 'false'
+  }
+
+  button.addEventListener('click', () => {
+    open = !open
+    render(session)
+  })
+  action.addEventListener('click', () => {
+    if (session) {
+      options.onOpen?.(session)
+      return
+    }
+    if (options.onLoginRequest) {
+      void options.onLoginRequest()
+      return
+    }
+    void options.manager.login()
+  })
+
+  const unsubscribe = options.manager.subscribe(nextSession => render(nextSession))
+  render(session)
+
+  return {
+    destroy() {
+      unsubscribe()
+      host.remove()
+    },
+    update(nextSession?: ReviewAuthSession | null) {
+      render(nextSession === undefined ? options.manager.getSession() : nextSession)
+    },
+  }
+}
+
 export interface ReviewSubmitOptions {
   hubUrl: string
   subjectId: string
@@ -1402,6 +1936,7 @@ export interface ReviewSubmitOptions {
   deploymentId: string
   authToken: string
   reviewId?: string
+  signal?: AbortSignal
 }
 
 export interface ReviewSubmitResult {
@@ -1433,6 +1968,7 @@ interface UploadAssetOptions {
   projectId: string
   deploymentId: string
   authToken: string
+  signal?: AbortSignal
 }
 
 function buildHubUrl(hubUrl: string, path: string): string {
@@ -1511,6 +2047,7 @@ async function uploadAsset(
     method: 'POST',
     headers: { Authorization: `Bearer ${options.authToken}` },
     body: form,
+    signal: options.signal,
   })
   if (!res.ok) throw new Error(`Asset upload failed: ${res.status}`)
   const data = await res.json() as { asset_id: string }
@@ -1523,10 +2060,10 @@ export async function submitReview(
 ): Promise<ReviewSubmitResult> {
   requireReviewAuthOptions(options)
 
-  const { hubUrl, subjectId, submittedBy, projectId, deploymentId, authToken } = options
+  const { hubUrl, subjectId, submittedBy, projectId, deploymentId, authToken, signal } = options
   const reviewId = options.reviewId ?? crypto.randomUUID()
   const assetIds: string[] = []
-  const uploadOptions = { hubUrl, projectId, deploymentId, authToken }
+  const uploadOptions = { hubUrl, projectId, deploymentId, authToken, signal }
 
   const eventsBlob = new Blob([JSON.stringify(result.events)], { type: 'application/json' })
   assetIds.push(await uploadAsset(uploadOptions, eventsBlob, 'events', 'application/json'))
@@ -1558,6 +2095,7 @@ export async function submitReview(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal,
   })
   if (!res.ok) throw new Error(`Review submit failed: ${res.status}`)
   const data = await res.json() as { review_id: string; status: string }

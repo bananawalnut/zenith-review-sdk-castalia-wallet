@@ -14,18 +14,17 @@ Normal recording starts in highlight mode and does not mount the drawing overlay
 
 Public staging clients should expose only public configuration such as `hubUrl`, `projectId`, and `deploymentId`. Do not bundle durable review tokens, access codes, or owner secrets in frontend code or public environment variables.
 
-Before calling `submitReview`, authenticate the reviewer at runtime and keep the returned token in memory or `sessionStorage`:
+Before calling `submitReview`, authenticate the reviewer at runtime. For public staging clients, prefer the SDK-native Zenith auth overlay so host apps do not rebuild review auth UI:
 
 ```ts
-import { createReviewAuthSession, submitReview } from '@zenith/review-sdk'
+import { authenticateReviewSession, submitReview } from '@zenith/review-sdk'
 
-const session = await createReviewAuthSession({
+const session = await authenticateReviewSession({
   hubUrl,
   projectId,
   deploymentId,
-  email,
-  accessCode,
   subjectId: window.location.href,
+  storage: 'session',
 })
 
 await submitReview(recording, {
@@ -38,4 +37,4 @@ await submitReview(recording, {
 })
 ```
 
-`createReviewAuthSession` posts to Hub's `/v1/review-auth/session` endpoint and returns the raw short-lived token once. The SDK does not persist that token. `submitReview` requires `projectId`, `deploymentId`, and `authToken`; it sends the Bearer token on asset and review submission and includes project/deployment identifiers in the Hub payloads.
+`authenticateReviewSession` reuses a fresh `sessionStorage` session when available, validates stored sessions with Hub by default, and otherwise injects a Zenith-branded Shadow DOM auth overlay into the host page. `createReviewAuthSession` remains available for custom flows; it posts to Hub's `/v1/review-auth/session` endpoint and returns the raw short-lived token once. `submitReview` requires `projectId`, `deploymentId`, and `authToken`; it sends the Bearer token on asset and review submission and includes project/deployment identifiers in the Hub payloads.

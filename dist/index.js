@@ -1391,6 +1391,273 @@ export function renderZenithAdminOverlay(options) {
         },
     };
 }
+function createReviewHudStyles() {
+    return `
+    :host { all: initial; color-scheme: dark; }
+    *, *::before, *::after { box-sizing: border-box; }
+    .zrh-root { position: fixed; right: 18px; bottom: 18px; z-index: var(--zrh-z-index); display: grid; gap: 10px; width: min(360px, calc(100vw - 36px)); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #f8fafc; pointer-events: none; }
+    .zrh-card { pointer-events: auto; border: 1px solid rgba(155, 251, 227, 0.38); border-radius: 18px; background: rgba(3, 7, 18, 0.9); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.54); backdrop-filter: blur(18px) saturate(1.08); -webkit-backdrop-filter: blur(18px) saturate(1.08); overflow: hidden; }
+    .zrh-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.14); }
+    .zrh-brand { display: grid; gap: 3px; min-width: 0; }
+    .zrh-eyebrow { color: #9BFBE3; font-size: 10px; font-weight: 850; letter-spacing: 0.16em; text-transform: uppercase; }
+    .zrh-title { color: #fff; font-size: 14px; font-weight: 780; line-height: 1.2; }
+    .zrh-status { border: 1px solid rgba(155, 251, 227, 0.24); border-radius: 999px; padding: 5px 8px; color: #cbd5e1; background: rgba(15, 23, 42, 0.72); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .zrh-status[data-state="recording"] { color: #fecdd3; border-color: rgba(248, 113, 113, 0.44); background: rgba(127, 29, 29, 0.34); }
+    .zrh-body { display: grid; gap: 10px; padding: 12px 14px 14px; }
+    .zrh-meta { display: grid; gap: 5px; color: #cbd5e1; font-size: 12px; line-height: 1.4; }
+    .zrh-meta strong { color: #f8fafc; font-weight: 760; }
+    .zrh-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .zrh-action { border: 1px solid rgba(155, 251, 227, 0.36); border-radius: 10px; background: rgba(155, 251, 227, 0.08); color: #f8fafc; cursor: pointer; font: 750 12px/1 ui-sans-serif, system-ui, sans-serif; padding: 9px 10px; }
+    .zrh-action:hover:not(:disabled) { background: rgba(155, 251, 227, 0.14); }
+    .zrh-action:disabled { cursor: not-allowed; opacity: 0.52; }
+    .zrh-action--danger { border-color: rgba(248, 113, 113, 0.38); background: rgba(127, 29, 29, 0.24); }
+    .zrh-error { display: none; color: #fecdd3; font-size: 12px; line-height: 1.4; }
+    .zrh-error[data-visible="true"] { display: block; }
+  `;
+}
+function formatReviewHudElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(total / 60).toString().padStart(2, '0');
+    const seconds = (total % 60).toString().padStart(2, '0');
+    return `${minutes}:${seconds}`;
+}
+export function createReviewHud(options) {
+    if (typeof document === 'undefined')
+        throw new Error('Review HUD requires a browser document');
+    const subjectId = () => typeof options.subjectId === 'function'
+        ? options.subjectId()
+        : options.subjectId || window.location.href;
+    const storageKey = options.storageKey ?? getDefaultReviewAuthStorageKey(options);
+    const manager = options.manager ?? createReviewAuthSessionManager({
+        hubUrl: options.hubUrl,
+        projectId: options.projectId,
+        deploymentId: options.deploymentId,
+        subjectId: subjectId(),
+        storage: options.storage ?? 'session',
+        storageKey,
+        brandLabel: options.brandLabel ?? 'Zenith Review',
+        title: options.title ?? 'Reviewer access',
+        message: options.message ?? 'Authenticate to start a global review recording for this page.',
+        accessCodePlaceholder: options.accessCodePlaceholder ?? 'Review access code',
+    });
+    let host = null;
+    let root = null;
+    let statusNode = null;
+    let sessionNode = null;
+    let subjectNode = null;
+    let elapsedNode = null;
+    let errorNode = null;
+    let startButton = null;
+    let submitButton = null;
+    let cancelButton = null;
+    let logoutButton = null;
+    let recorder = null;
+    let status = 'idle';
+    let startedAt = 0;
+    let elapsedTimer;
+    let unsubscribe;
+    let mounted = false;
+    function setError(error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        status = 'error';
+        if (errorNode) {
+            errorNode.textContent = err.message;
+            errorNode.dataset.visible = 'true';
+        }
+        options.onError?.(err);
+        render();
+    }
+    function clearError() {
+        if (!errorNode)
+            return;
+        errorNode.textContent = '';
+        errorNode.dataset.visible = 'false';
+    }
+    function render() {
+        const session = manager.getSession();
+        if (statusNode) {
+            statusNode.dataset.state = status;
+            statusNode.textContent = status === 'recording'
+                ? 'Recording'
+                : status === 'submitting'
+                    ? 'Submitting'
+                    : status === 'submitted'
+                        ? 'Submitted'
+                        : status === 'error'
+                            ? 'Needs attention'
+                            : session
+                                ? 'Ready'
+                                : 'Locked';
+        }
+        if (sessionNode)
+            sessionNode.innerHTML = `<strong>Session</strong> ${session?.label || 'Not authenticated'}`;
+        if (subjectNode)
+            subjectNode.innerHTML = `<strong>Subject</strong> ${subjectId()}`;
+        if (elapsedNode)
+            elapsedNode.innerHTML = `<strong>Elapsed</strong> ${status === 'recording' ? formatReviewHudElapsed(performance.now() - startedAt) : '00:00'}`;
+        if (startButton)
+            startButton.disabled = status === 'recording' || status === 'submitting';
+        if (submitButton)
+            submitButton.disabled = status !== 'recording';
+        if (cancelButton)
+            cancelButton.disabled = status !== 'recording';
+        if (logoutButton)
+            logoutButton.disabled = status === 'recording' || status === 'submitting';
+        root?.setAttribute('data-state', status);
+    }
+    function startElapsedTimer() {
+        stopElapsedTimer();
+        elapsedTimer = window.setInterval(render, 500);
+    }
+    function stopElapsedTimer() {
+        if (elapsedTimer === undefined)
+            return;
+        window.clearInterval(elapsedTimer);
+        elapsedTimer = undefined;
+    }
+    async function startReview() {
+        try {
+            mount();
+            clearError();
+            const session = manager.getSession() ?? await manager.restore() ?? await manager.login();
+            if (!session)
+                return;
+            if (recorder)
+                await recorder.stop().catch(() => undefined);
+            recorder = createReviewRecorder({
+                captureAudio: options.captureAudio ?? false,
+                captureMode: 'highlight',
+                overlayZIndex: (options.zIndex ?? 2147483000) - 1,
+            });
+            await recorder.start();
+            startedAt = performance.now();
+            status = 'recording';
+            startElapsedTimer();
+            render();
+        }
+        catch (error) {
+            recorder = null;
+            stopElapsedTimer();
+            setError(error);
+        }
+    }
+    async function stopAndSubmit() {
+        if (!recorder)
+            return null;
+        const current = recorder;
+        recorder = null;
+        status = 'submitting';
+        stopElapsedTimer();
+        render();
+        try {
+            const recording = await current.stop();
+            const session = manager.getSession() ?? await manager.restore();
+            if (!session)
+                throw new Error('Review session expired before submission. Authenticate again.');
+            const result = await submitReview(recording, {
+                hubUrl: options.hubUrl,
+                projectId: options.projectId,
+                deploymentId: options.deploymentId,
+                subjectId: subjectId(),
+                authToken: session.token,
+            });
+            status = 'submitted';
+            options.onSubmitted?.(result);
+            render();
+            return result;
+        }
+        catch (error) {
+            setError(error);
+            return null;
+        }
+    }
+    async function cancelReview() {
+        const current = recorder;
+        recorder = null;
+        stopElapsedTimer();
+        if (current)
+            await current.stop().catch(() => undefined);
+        status = 'idle';
+        render();
+    }
+    function mount() {
+        if (mounted)
+            return;
+        host = document.createElement('div');
+        const shadow = host.attachShadow({ mode: 'closed' });
+        const style = document.createElement('style');
+        style.textContent = createReviewHudStyles();
+        shadow.append(style);
+        root = document.createElement('div');
+        root.className = 'zrh-root';
+        root.style.setProperty('--zrh-z-index', String(options.zIndex ?? 2147483000));
+        root.innerHTML = `
+      <section class="zrh-card" aria-label="Zenith review HUD">
+        <div class="zrh-head">
+          <div class="zrh-brand"><div class="zrh-eyebrow">${escapeReviewAuthHtml(options.brandLabel ?? 'Zenith Review')}</div><div class="zrh-title">Global review HUD</div></div>
+          <div class="zrh-status"></div>
+        </div>
+        <div class="zrh-body">
+          <div class="zrh-meta"><div data-role="session"></div><div data-role="subject"></div><div data-role="elapsed"></div></div>
+          <div class="zrh-actions">
+            <button class="zrh-action" data-action="start" type="button">Start recording</button>
+            <button class="zrh-action" data-action="submit" type="button">Stop & submit</button>
+            <button class="zrh-action zrh-action--danger" data-action="cancel" type="button">Cancel</button>
+            <button class="zrh-action" data-action="logout" type="button">Sign out</button>
+          </div>
+          <div class="zrh-error" role="alert" data-visible="false"></div>
+        </div>
+      </section>
+    `;
+        shadow.append(root);
+        document.body.append(host);
+        statusNode = root.querySelector('.zrh-status');
+        sessionNode = root.querySelector('[data-role="session"]');
+        subjectNode = root.querySelector('[data-role="subject"]');
+        elapsedNode = root.querySelector('[data-role="elapsed"]');
+        errorNode = root.querySelector('.zrh-error');
+        startButton = root.querySelector('[data-action="start"]');
+        submitButton = root.querySelector('[data-action="submit"]');
+        cancelButton = root.querySelector('[data-action="cancel"]');
+        logoutButton = root.querySelector('[data-action="logout"]');
+        startButton.addEventListener('click', () => void startReview());
+        submitButton.addEventListener('click', () => void stopAndSubmit());
+        cancelButton.addEventListener('click', () => void cancelReview());
+        logoutButton.addEventListener('click', () => {
+            manager.logout();
+            render();
+        });
+        unsubscribe = manager.subscribe(() => render());
+        void manager.restore().catch(() => manager.logout());
+        mounted = true;
+        render();
+    }
+    function unmount() {
+        void cancelReview();
+        host?.remove();
+        host = null;
+        root = null;
+        unsubscribe?.();
+        unsubscribe = undefined;
+        mounted = false;
+    }
+    function reveal() {
+        mount();
+        render();
+    }
+    return {
+        mount,
+        unmount,
+        reveal,
+        startReview,
+        stopAndSubmit,
+        cancelReview,
+        logout() {
+            manager.logout();
+            render();
+        },
+    };
+}
 function buildHubUrl(hubUrl, path) {
     return `${hubUrl.replace(/\/+$/, '')}${path}`;
 }

@@ -267,6 +267,33 @@ export interface ZenithAdminOverlayHandle {
     update(session?: ReviewAuthSession | null): void;
 }
 export declare function renderZenithAdminOverlay(options: ZenithAdminOverlayOptions): ZenithAdminOverlayHandle;
+export interface ReviewHudOptions {
+    hubUrl: string;
+    projectId: string;
+    deploymentId: string;
+    subjectId?: string | (() => string);
+    manager?: ReviewAuthSessionManager;
+    storage?: ReviewAuthSessionStorage;
+    storageKey?: string;
+    brandLabel?: string;
+    title?: string;
+    message?: string;
+    accessCodePlaceholder?: string;
+    captureAudio?: boolean;
+    zIndex?: number;
+    onSubmitted?: (result: ReviewSubmitResult) => void;
+    onError?: (error: Error) => void;
+}
+export interface ReviewHudHandle {
+    mount(): void;
+    unmount(): void;
+    reveal(): void;
+    startReview(): Promise<void>;
+    stopAndSubmit(): Promise<ReviewSubmitResult | null>;
+    cancelReview(): Promise<void>;
+    logout(): void;
+}
+export declare function createReviewHud(options: ReviewHudOptions): ReviewHudHandle;
 export interface ReviewSubmitOptions {
     hubUrl: string;
     subjectId: string;

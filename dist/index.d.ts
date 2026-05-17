@@ -254,6 +254,7 @@ export interface ReviewAuthSessionManager {
     subscribe(listener: ReviewAuthSessionListener): () => void;
 }
 export declare function createReviewAuthSessionManager(options: ReviewAuthSessionManagerOptions): ReviewAuthSessionManager;
+export declare const ZENITH_PRODUCTION_HUB_URL = "https://hub.zenith-research.ca";
 export interface ZenithAdminOverlayOptions {
     manager: ReviewAuthSessionManager;
     label?: string;
@@ -268,7 +269,7 @@ export interface ZenithAdminOverlayHandle {
 }
 export declare function renderZenithAdminOverlay(options: ZenithAdminOverlayOptions): ZenithAdminOverlayHandle;
 export interface ReviewHudOptions {
-    hubUrl: string;
+    hubUrl?: string;
     projectId: string;
     deploymentId: string;
     subjectId?: string | (() => string);

@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- SDK-owned global review HUD (`createReviewHud`) — mounts into `document.body` with Shadow DOM, restores short-lived Hub auth sessions, starts/stops the global recorder, and submits to Hub without requiring consumer apps to route into or embed controls inside reviewed pages.
+- SDK-owned global review HUD (`createReviewHud`) — mounts into `document.body` with Shadow DOM, defaults to the production Hub at `https://hub.zenith-research.ca`, restores short-lived Hub auth sessions, starts/stops the global recorder, and submits to Hub without requiring consumer apps to route into or embed controls inside reviewed pages.
 - SDK package scaffold files (`package.json`, lockfile, TypeScript configs) — makes the accepted Review SDK API buildable from a fresh checkout instead of relying on untracked local files.
 - Runtime review auth session helpers (`createReviewAuthSession`, `getReviewAuthSession`) and exported auth/session types — lets public staging clients authenticate against Hub for short-lived review intake tokens without bundling durable frontend secrets.
 - Headless auth session manager and Zenith admin overlay renderer — lets client sites trigger login from custom landing-page UI, persist only short-lived session state, wrap privileged actions in a session, and show the exact Zenith Hub right-side menu mark/tooltip treatment as the authenticated admin affordance.

@@ -1299,6 +1299,7 @@ export function createReviewAuthSessionManager(options) {
 }
 const ZENITH_ADMIN_MARK_PATH = 'M109.356 0H65.3503L0 83.6345V128H65.3503L0 211.637V256H185.25V222.995H34.8395L109.356 128H185.25V94.9946H34.8395L109.356 0Z';
 const ZENITH_ADMIN_MARK_GRADIENT_PATH = 'M164.698 0H98.4224L0 125.778V192.501H98.4224L0 318.283V385H279V335.363H52.4707L164.698 192.501H279V142.863H52.4707L164.698 0Z';
+export const ZENITH_PRODUCTION_HUB_URL = 'https://hub.zenith-research.ca';
 function createZenithAdminOverlayStyles() {
     return `
     :host { all: initial; color-scheme: dark; }
@@ -1424,12 +1425,13 @@ function formatReviewHudElapsed(ms) {
 export function createReviewHud(options) {
     if (typeof document === 'undefined')
         throw new Error('Review HUD requires a browser document');
+    const hubUrl = options.hubUrl?.trim() || ZENITH_PRODUCTION_HUB_URL;
     const subjectId = () => typeof options.subjectId === 'function'
         ? options.subjectId()
         : options.subjectId || window.location.href;
-    const storageKey = options.storageKey ?? getDefaultReviewAuthStorageKey(options);
+    const storageKey = options.storageKey ?? getDefaultReviewAuthStorageKey({ ...options, hubUrl });
     const manager = options.manager ?? createReviewAuthSessionManager({
-        hubUrl: options.hubUrl,
+        hubUrl,
         projectId: options.projectId,
         deploymentId: options.deploymentId,
         subjectId: subjectId(),
@@ -1555,7 +1557,7 @@ export function createReviewHud(options) {
             if (!session)
                 throw new Error('Review session expired before submission. Authenticate again.');
             const result = await submitReview(recording, {
-                hubUrl: options.hubUrl,
+                hubUrl,
                 projectId: options.projectId,
                 deploymentId: options.deploymentId,
                 subjectId: subjectId(),

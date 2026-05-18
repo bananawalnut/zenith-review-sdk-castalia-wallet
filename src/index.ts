@@ -2311,6 +2311,15 @@ function buildHubUrl(hubUrl: string, path: string): string {
   return `${hubUrl.replace(/\/+$/, '')}${path}`
 }
 
+async function fetchReviewHub(url: string, init: RequestInit, label: string): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${label} network failed: ${message}`)
+  }
+}
+
 function requireReviewAuthOptions(options: Pick<ReviewSubmitOptions, 'projectId' | 'deploymentId' | 'authToken'>): void {
   if (!options.projectId) throw new Error('Review submit requires projectId')
   if (!options.deploymentId) throw new Error('Review submit requires deploymentId')
@@ -2348,21 +2357,21 @@ export async function createReviewAuthSession(options: ReviewAuthSessionRequest)
     subject_id: options.subjectId,
   }
 
-  const res = await fetch(buildHubUrl(options.hubUrl, '/v1/review-auth/session'), {
+  const res = await fetchReviewHub(buildHubUrl(options.hubUrl, '/v1/review-auth/session'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  })
+  }, 'Review auth session')
   if (!res.ok) throw new Error(`Review auth session failed: ${res.status}`)
 
   return normalizeReviewAuthSession(await res.json() as ReviewAuthSessionResponse)
 }
 
 export async function getReviewAuthSession(options: ReviewAuthSessionStatusOptions): Promise<ReviewAuthSessionStatus> {
-  const res = await fetch(buildHubUrl(options.hubUrl, '/v1/review-auth/session'), {
+  const res = await fetchReviewHub(buildHubUrl(options.hubUrl, '/v1/review-auth/session'), {
     method: 'GET',
     headers: { Authorization: `Bearer ${options.authToken}` },
-  })
+  }, 'Review auth session status')
   if (!res.ok) throw new Error(`Review auth session status failed: ${res.status}`)
 
   return normalizeReviewAuthSessionStatus(await res.json() as ReviewAuthSessionStatusResponse)
@@ -2379,12 +2388,12 @@ async function uploadAsset(
   form.append('asset_type', assetType)
   form.append('project_id', options.projectId)
   form.append('deployment_id', options.deploymentId)
-  const res = await fetch(buildHubUrl(options.hubUrl, '/v1/reviews/assets'), {
+  const res = await fetchReviewHub(buildHubUrl(options.hubUrl, '/v1/reviews/assets'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${options.authToken}` },
     body: form,
     signal: options.signal,
-  })
+  }, `Review ${assetType} asset upload`)
   if (!res.ok) throw new Error(`Asset upload failed: ${res.status}`)
   const data = await res.json() as { asset_id: string }
   return data.asset_id
@@ -2424,15 +2433,15 @@ export async function submitReview(
   }
   if (submittedBy) body.submitted_by = submittedBy
 
-  const res = await fetch(buildHubUrl(hubUrl, '/v1/reviews'), {
+  const res = await fetchReviewHub(buildHubUrl(hubUrl, '/v1/reviews'), {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${authToken}`,
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
     },
     body: JSON.stringify(body),
     signal,
-  })
+  }, 'Review submit')
   if (!res.ok) throw new Error(`Review submit failed: ${res.status}`)
   const data = await res.json() as { review_id: string; status: string }
 

@@ -231,7 +231,16 @@ class BrowserReviewRecorder {
                 }
             });
         }
-        this.captureState.enter();
+        try {
+            this.captureState.enter();
+        }
+        catch (error) {
+            this.log({
+                type: 'recorder-warning',
+                code: 'capture-state',
+                message: error instanceof Error ? error.message : 'Capture state initialization failed.',
+            });
+        }
         this.log({ type: 'recording-started' });
         this.log({
             type: 'session-start',
@@ -536,8 +545,20 @@ class BrowserReviewRecorder {
     captureSelection() {
         if (this.captureMode !== 'highlight')
             return;
-        const selection = this.document.getSelection();
-        const text = selection?.toString() ?? '';
+        let selection = null;
+        let text = '';
+        try {
+            selection = this.document.getSelection();
+            text = selection?.toString() ?? '';
+        }
+        catch (error) {
+            this.log({
+                type: 'recorder-warning',
+                code: 'selection-capture',
+                message: error instanceof Error ? error.message : 'Selection capture failed.',
+            });
+            return;
+        }
         if (!selection || text.length === 0 || selection.rangeCount === 0) {
             if (!this.selection && this.lastSelectionKey === '')
                 return;
@@ -546,10 +567,22 @@ class BrowserReviewRecorder {
             this.log({ type: 'selection-change', selection: undefined });
             return;
         }
-        const range = selection.getRangeAt(0);
-        const rects = Array.from(range.getClientRects())
-            .filter(rect => rect.width > 0 || rect.height > 0)
-            .map(rectFromDomRect);
+        let range;
+        let rects;
+        try {
+            range = selection.getRangeAt(0);
+            rects = Array.from(range.getClientRects())
+                .filter(rect => rect.width > 0 || rect.height > 0)
+                .map(rectFromDomRect);
+        }
+        catch (error) {
+            this.log({
+                type: 'recorder-warning',
+                code: 'selection-capture',
+                message: error instanceof Error ? error.message : 'Selection geometry capture failed.',
+            });
+            return;
+        }
         const nextSelection = {
             text,
             anchor: getSelectionNodeLabel(selection.anchorNode),

@@ -1,4 +1,4 @@
-export type ReviewCaptureEventType = 'recording-started' | 'recording-stopped' | 'capture-mode-changed' | 'pointer-move' | 'pointer-down' | 'pointer-up' | 'click' | 'key-down' | 'selection-change' | 'drawing-enabled' | 'drawing-disabled' | 'drawing-input-enabled' | 'drawing-input-disabled' | 'stroke-started' | 'stroke-point' | 'stroke-ended' | 'audio-chunk' | 'audio-error' | 'time-limit-reached' | 'session-start' | 'navigation' | 'visibility-change';
+export type ReviewCaptureEventType = 'recording-started' | 'recording-stopped' | 'capture-mode-changed' | 'pointer-move' | 'pointer-down' | 'pointer-up' | 'click' | 'key-down' | 'selection-change' | 'drawing-enabled' | 'drawing-disabled' | 'drawing-input-enabled' | 'drawing-input-disabled' | 'stroke-started' | 'stroke-point' | 'stroke-ended' | 'audio-chunk' | 'audio-error' | 'recorder-warning' | 'time-limit-reached' | 'session-start' | 'navigation' | 'visibility-change';
 export interface ReviewCaptureEventBase {
     id: number;
     type: ReviewCaptureEventType;
@@ -92,6 +92,11 @@ export interface ReviewAudioErrorEvent extends ReviewCaptureEventBase {
     type: 'audio-error';
     message: string;
 }
+export interface ReviewRecorderWarningEvent extends ReviewCaptureEventBase {
+    type: 'recorder-warning';
+    code: 'capture-state' | 'selection-capture';
+    message: string;
+}
 export interface ReviewTimeLimitReachedEvent extends ReviewCaptureEventBase {
     type: 'time-limit-reached';
     timeLimitMs: number;
@@ -128,7 +133,7 @@ export interface ReviewVisibilityChangeEvent extends ReviewCaptureEventBase {
     type: 'visibility-change';
     state: 'visible' | 'hidden';
 }
-export type ReviewCaptureEvent = ReviewRecordingStateEvent | ReviewCaptureModeEvent | ReviewDrawingStateEvent | ReviewDrawingInputStateEvent | ReviewPointerCaptureEvent | ReviewKeyCaptureEvent | ReviewSelectionCaptureEvent | ReviewStrokeCaptureEvent | ReviewAudioCaptureEvent | ReviewAudioErrorEvent | ReviewTimeLimitReachedEvent | ReviewSessionStartEvent | ReviewNavigationCaptureEvent | ReviewVisibilityChangeEvent;
+export type ReviewCaptureEvent = ReviewRecordingStateEvent | ReviewCaptureModeEvent | ReviewDrawingStateEvent | ReviewDrawingInputStateEvent | ReviewPointerCaptureEvent | ReviewKeyCaptureEvent | ReviewSelectionCaptureEvent | ReviewStrokeCaptureEvent | ReviewAudioCaptureEvent | ReviewAudioErrorEvent | ReviewRecorderWarningEvent | ReviewTimeLimitReachedEvent | ReviewSessionStartEvent | ReviewNavigationCaptureEvent | ReviewVisibilityChangeEvent;
 export interface ReviewCaptureSnapshot {
     recording: boolean;
     captureMode: ReviewCaptureMode;

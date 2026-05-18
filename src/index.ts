@@ -17,6 +17,7 @@ export type ReviewCaptureEventType =
   | 'stroke-ended'
   | 'audio-chunk'
   | 'audio-error'
+  | 'recorder-warning'
   | 'time-limit-reached'
   | 'session-start'
   | 'navigation'
@@ -132,6 +133,12 @@ export interface ReviewAudioErrorEvent extends ReviewCaptureEventBase {
   message: string
 }
 
+export interface ReviewRecorderWarningEvent extends ReviewCaptureEventBase {
+  type: 'recorder-warning'
+  code: 'capture-state' | 'selection-capture'
+  message: string
+}
+
 
 export interface ReviewTimeLimitReachedEvent extends ReviewCaptureEventBase {
   type: 'time-limit-reached'
@@ -191,6 +198,7 @@ export type ReviewCaptureEvent =
   | ReviewStrokeCaptureEvent
   | ReviewAudioCaptureEvent
   | ReviewAudioErrorEvent
+  | ReviewRecorderWarningEvent
   | ReviewTimeLimitReachedEvent
   | ReviewSessionStartEvent
   | ReviewNavigationCaptureEvent
@@ -560,7 +568,15 @@ class BrowserReviewRecorder implements ReviewRecorder {
       })
     }
 
-    this.captureState.enter()
+    try {
+      this.captureState.enter()
+    } catch (error) {
+      this.log({
+        type: 'recorder-warning',
+        code: 'capture-state',
+        message: error instanceof Error ? error.message : 'Capture state initialization failed.',
+      })
+    }
     this.log({ type: 'recording-started' })
     this.log({
       type: 'session-start',
@@ -910,8 +926,19 @@ class BrowserReviewRecorder implements ReviewRecorder {
   private captureSelection() {
     if (this.captureMode !== 'highlight') return
 
-    const selection = this.document.getSelection()
-    const text = selection?.toString() ?? ''
+    let selection: Selection | null = null
+    let text = ''
+    try {
+      selection = this.document.getSelection()
+      text = selection?.toString() ?? ''
+    } catch (error) {
+      this.log({
+        type: 'recorder-warning',
+        code: 'selection-capture',
+        message: error instanceof Error ? error.message : 'Selection capture failed.',
+      })
+      return
+    }
 
     if (!selection || text.length === 0 || selection.rangeCount === 0) {
       if (!this.selection && this.lastSelectionKey === '') return
@@ -921,10 +948,21 @@ class BrowserReviewRecorder implements ReviewRecorder {
       return
     }
 
-    const range = selection.getRangeAt(0)
-    const rects = Array.from(range.getClientRects())
-      .filter(rect => rect.width > 0 || rect.height > 0)
-      .map(rectFromDomRect)
+    let range: Range
+    let rects: ReviewCaptureRect[]
+    try {
+      range = selection.getRangeAt(0)
+      rects = Array.from(range.getClientRects())
+        .filter(rect => rect.width > 0 || rect.height > 0)
+        .map(rectFromDomRect)
+    } catch (error) {
+      this.log({
+        type: 'recorder-warning',
+        code: 'selection-capture',
+        message: error instanceof Error ? error.message : 'Selection geometry capture failed.',
+      })
+      return
+    }
 
     const nextSelection: ReviewSelectionSnapshot = {
       text,

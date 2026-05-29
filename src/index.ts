@@ -1997,6 +1997,13 @@ export interface ReviewHudHandle {
 
 type ReviewHudStatus = 'idle' | 'recording' | 'submitting' | 'submitted' | 'error'
 
+function renderLabelValue(node: HTMLElement | null, label: string, value: string): void {
+  if (!node) return
+  const strong = document.createElement('strong')
+  strong.textContent = label
+  node.replaceChildren(strong, document.createTextNode(` ${value}`))
+}
+
 function createReviewHudStyles(): string {
   return `
     :host { all: initial; color-scheme: dark; }
@@ -2101,9 +2108,9 @@ export function createReviewHud(options: ReviewHudOptions): ReviewHudHandle {
                 ? 'Ready'
                 : 'Locked'
     }
-    if (sessionNode) sessionNode.innerHTML = `<strong>Session</strong> ${session?.label || 'Not authenticated'}`
-    if (subjectNode) subjectNode.innerHTML = `<strong>Subject</strong> ${subjectId()}`
-    if (elapsedNode) elapsedNode.innerHTML = `<strong>Elapsed</strong> ${status === 'recording' ? formatReviewHudElapsed(performance.now() - startedAt) : '00:00'}`
+    renderLabelValue(sessionNode, 'Session', session?.label || 'Not authenticated')
+    renderLabelValue(subjectNode, 'Subject', subjectId())
+    renderLabelValue(elapsedNode, 'Elapsed', status === 'recording' ? formatReviewHudElapsed(performance.now() - startedAt) : '00:00')
     if (startButton) startButton.disabled = status === 'recording' || status === 'submitting'
     if (submitButton) submitButton.disabled = status !== 'recording'
     if (cancelButton) cancelButton.disabled = status !== 'recording'

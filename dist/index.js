@@ -1821,4 +1821,3 @@ export async function submitReview(result, options) {
     const data = await res.json();
     return { reviewId: data.review_id, assetIds, status: data.status };
 }
-export * from "./wallet-auth.js";

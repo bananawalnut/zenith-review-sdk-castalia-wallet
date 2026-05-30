@@ -6,8 +6,10 @@ The package owns four things only:
 
 - recording session data: cursor, clicks, key presses, highlighted text, strokes, and audio chunks
 - an opt-in transparent canvas overlay used for drawing while a recording is active
-- runtime review-auth helpers for short-lived Hub review sessions
+- Runtime review-auth helpers for short-lived Hub review sessions
 - an SDK-owned global review HUD mounted into the page shell via Shadow DOM, not embedded inside a host-app route or reviewed element
+
+This package does not implement Castalia Wallet or ship Castalia wallet-auth helpers. Wallet proof-of-possession belongs in the standalone `@castalia/wallet-auth` package and is supplied by a Castalia Wallet provider such as the Chrome extension.
 
 Normal recording starts in highlight mode and does not mount the drawing overlay. While recording, holding Command temporarily enters drawing mode, mounts the transparent canvas above the host app, and enables drawing input. Releasing Command returns to highlight mode while completed strokes fade out.
 

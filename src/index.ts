@@ -2454,5 +2454,3 @@ export async function submitReview(
 
   return { reviewId: data.review_id, assetIds, status: data.status }
 }
-
-export * from "./wallet-auth.js"

@@ -318,4 +318,4 @@ export interface ReviewSubmitResult {
 export declare function createReviewAuthSession(options: ReviewAuthSessionRequest): Promise<ReviewAuthSession>;
 export declare function getReviewAuthSession(options: ReviewAuthSessionStatusOptions): Promise<ReviewAuthSessionStatus>;
 export declare function submitReview(result: ReviewRecordingResult, options: ReviewSubmitOptions): Promise<ReviewSubmitResult>;
-export * from "./wallet-auth.js";
+export {};
